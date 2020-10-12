@@ -77,7 +77,7 @@ if (!fs.existsSync(pathToArchive)) {
 }
 
 //check if destination is inside dirToArchive
-if (resultFilePath.startsWith(pathToArchive) && !autoAnswerYes) {
+if (resultFilePath.startsWith(pathToArchive + '\\') && !autoAnswerYes) {
 	let question = 'Warning: '.brightRed + 'Destination file is inside the directory that will be archived. This may cause recursive issues. \nProceed? (yes): '
 	rl.question(question, (proceed) => {
 		
