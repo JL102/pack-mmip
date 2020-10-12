@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
 const { spawn } = require('child_process');
+const { platform } = require('os');
 var archiver, openExplorer;
 
 const rl = readline.createInterface({
@@ -60,7 +61,7 @@ if (!dirCalled) {
 if (!dirToArchive || !pathToExtension) {
 	let printStr = 'USAGE: \n\tpack-mmip (path to directory) (path to packed extension OR just its name) (options)\nFor more help, run "pack-mmip -help"';
 	console.log(printStr);
-	process.exit(0);
+	process.exit(1);
 }
 
 var pathToArchive = path.resolve(dirToArchive);
@@ -73,12 +74,12 @@ var resultFilePath = path.resolve(pathToExtension);
 //check if path-to-archive exists
 if (!fs.existsSync(pathToArchive)) {
 	console.log(`Error: Path "${pathToArchive}" does not exist`);
-	process.exit(0);
+	process.exit(1);
 }
 
 //check if destination is inside dirToArchive
 if (resultFilePath.startsWith(pathToArchive + '\\') && !autoAnswerYes) {
-	let question = 'Warning: '.brightRed + 'Destination file is inside the directory that will be archived. This may cause recursive issues. \nProceed? (yes): '
+	let question = '\nWarning: '.brightRed + 'Destination file is inside the directory that will be archived. This may cause recursive issues. \nProceed? (yes): '
 	rl.question(question, (proceed) => {
 		
 		if (proceed == '' || proceed.toLowerCase().startsWith('y')) {
@@ -99,7 +100,7 @@ else {
 function checkExists() {
 	if (fs.existsSync(resultFilePath) && !autoAnswerYes) {
 	
-		let question = 'Warning: '.brightRed + resultFilePath + ' already exists.' + '\nOverwrite? (yes): ';
+		let question = '\nWarning: '.brightRed + resultFilePath + ' already exists.' + '\nOverwrite? (yes): ';
 		rl.question(question, (overwrite) => {
 	
 			if (overwrite == '' || overwrite.toLowerCase().startsWith('y')) {
@@ -118,11 +119,12 @@ function checkExists() {
 }
 
 function begin() {
-	console.log(`Going to zip: ${pathToArchive.brightYellow}`);
-	console.log(`Destination: ${resultFilePath.brightYellow}`);
-
+	console.log(`\nGoing to zip: ${pathToArchive.brightYellow}`);
+	console.log(`Destination: ${resultFilePath.brightYellow}\n`);
+	
 	// create a file to stream archive data to.
 	var output = fs.createWriteStream(resultFilePath);
+	
 	var archive = archiver('zip', {
 		zlib: { level: -1 }, // -1: Default compression level
 	});
@@ -136,20 +138,29 @@ function begin() {
 
 		finish();
 	});
+	
+	output.on('error', err => {
+		console.log('Could not write to file. Is it open in another program? (WriteStream output error)');
+		process.exit(1);
+	})
 
 	// good practice to catch warnings (ie stat failures and other non-blocking errors)
 	archive.on('warning', function (err) {
+		
+		console.log('archive warning: ');
+		
 		if (err.code === 'ENOENT') {
 			// log warning
+			console.log(err);
 		} else {
-			// throw error
-			throw err;
+			console.log(err);
 		}
 	});
 
 	// good practice to catch this error explicitly
 	archive.on('error', function (err) {
-		throw err;
+		console.log('Could not write to file. Is it open in another program? (archiver error)');
+		process.exit(1);
 	});
 
 	// pipe archive data to the file
