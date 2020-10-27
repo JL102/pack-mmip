@@ -24,7 +24,7 @@ var dirCalled = process.argv[2];
 var dirToArchive = process.argv[3];
 var pathToExtension = process.argv[4];
 
-var autoAnswerYes = false, openAfterComplete = false, showAfterComplete = false;
+var autoAnswerYes = false, openAfterComplete = false, showAfterComplete = false, debug = false;
 
 for (var arg of process.argv) {
 	switch (arg.toLowerCase()) {
@@ -36,10 +36,14 @@ for (var arg of process.argv) {
 		case '--openaftercomplete':
 			openAfterComplete = true;
 			break;
-		case '-s':
-		case '--showaftercomplete':
-			showAfterComplete = true;
-			break;
+			case '-s':
+			case '--showaftercomplete':
+				showAfterComplete = true;
+				break;
+			case '-d':
+			case '--debug':
+				debug = true;
+				break;
 		case 'help':
 		case '-help':
 		case '--help':
@@ -47,6 +51,8 @@ for (var arg of process.argv) {
 			process.exit(0);
 	}
 }
+
+if (debug) console.log(process.argv);
 
 //if the first arg is some form of 'help', print help info then exit
 if (dirCalled == 'help' || dirCalled == '-help' || dirCalled == '--help') {
@@ -58,11 +64,37 @@ if (!dirCalled) {
 	console.log('dirCalled is undefined. You must run this script from the provided batch file.');
 }
 
-if (!dirToArchive || !pathToExtension) {
-	let printStr = 'USAGE: \n\tpack-mmip (path to directory) (path to packed extension OR just its name) (options)\nFor more help, run "pack-mmip -help"';
+if (!dirToArchive) {
+	let printStr = 'USAGE: \n\tpack-mmip (path to directory) ([optional] path to packed extension OR just its name) (options)\nFor more help, run "pack-mmip -help"';
 	console.log(printStr);
 	process.exit(1);
 }
+
+// If there are spaces in dirToArchive, Node will screw up with parsing the arguments.
+// pack-mmip "./foo bar/" baz will cause process.argv[3] to be '.\\foo bar" baz'
+//	This one handles if you used doublequotes
+if (dirToArchive.includes('\"')) {
+	let split = dirToArchive.split('\"');
+	if (debug) console.log("There is a space in the dirToArchive argument; Attempting to parse the correct arguments");
+	dirToArchive = split[0];
+	pathToExtension = ('' + split[1]).trim(); // trim because it might include spaces
+	if (debug) console.log(`dirToArchive = "${dirToArchive}"; pathToExtension = "${pathToExtension}"`);
+}
+//	This one handles if you used singlequotes
+else if (dirToArchive.includes('\'')) {
+	let split = dirToArchive.split('\'');
+	if (debug) console.log("There is a space in the dirToArchive argument; Attempting to parse the correct arguments");
+	dirToArchive = split[0];
+	pathToExtension = ('' + split[1]).trim(); // trim because it might include spaces
+	if (debug) console.log(`dirToArchive = "${dirToArchive}"; pathToExtension = "${pathToExtension}"`);
+}
+
+// if no path to extension is specified, then we can give it the same name as the directory
+if (!pathToExtension) {
+	pathToExtension = dirToArchive;
+}
+
+//	===	===	===	===	===
 
 var pathToArchive = path.resolve(dirToArchive);
 //add .mmip to extension path
@@ -70,6 +102,8 @@ if (!pathToExtension.endsWith('.mmip')) {
 	pathToExtension = pathToExtension + '.mmip';
 }
 var resultFilePath = path.resolve(pathToExtension);
+
+//if (debug) console.log(`pathToArchive=${pathToArchive}\nresultFilePath=${resultFilePath}`);
 
 //check if path-to-archive exists
 if (!fs.existsSync(pathToArchive)) {
@@ -210,11 +244,13 @@ function printHelp() {
 	let helpStr =
 		'\nAutomatically packs an MMIP extension for MediaMonkey 5.\n\n'
 		+ 'USAGE: \n'
-		+ '\tpack-mmip (path to directory) (path to packed extension OR just its name) (options)\n'
+		+ '\tpack-mmip (path to directory) ([optional] path to packed extension OR just its name) (options)\n'
 		+ 'OPTIONS: \n'
 		+ '\t-y \t--Yes \t\t\tAutomatically answer "yes" to prompts\n'
 		+ '\t-o \t--OpenAfterComplete\tOpen file (Install to MediaMonkey) after complete\n'
 		+ '\t-s \t--ShowAfterComplete\tShow in folder after complete\n'
+		+ '\t-d \t--debug\tDebug logs. Please use this if you encounter a bug, and paste the logs into a new GitHub issue.'
+		+ '\nIf path to packed extension is not specified, it will default to the name of the folder.\n'
 	//+ '\nNOTE: The packed extension will be placed in the directory that this script was called from.';
 	console.log(helpStr);
 }
