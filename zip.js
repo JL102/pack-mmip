@@ -20,48 +20,100 @@ catch (err) {
 	process.exit(0);
 }
 
-var dirCalled = process.argv[2];
-var dirToArchive = process.argv[3];
-var pathToExtension = process.argv[4];
-
 var autoAnswerYes = false, openAfterComplete = false, showAfterComplete = false, debug = false;
 
-for (var arg of process.argv) {
-	switch (arg.toLowerCase()) {
-		case '-y':
-		case '--yes':
-			autoAnswerYes = true;
-			break;
-		case '-o':
-		case '--openaftercomplete':
-			openAfterComplete = true;
-			break;
+if (process.env.NODE_ENV == 'debug') debug = true;
+
+if (debug) console.log(process.argv);
+
+//duplicate process.argv
+var args = [];
+for (var i = 2; i < process.argv.length; i++) args.push(process.argv[i]);
+
+
+for (var arg of args) if (arg.includes('\"'))
+	console.log(`${'Warning: '.yellow} Command line arguments may be broken. If you are experiencing issues, try avoiding putting backslashes before quotation marks ("C:\\my directory\\\")`);
+
+//fix broken args which include quotation marks
+for (var i = 0; i < args.length; i++) {
+	if (debug) console.log(`i=${i}, arg=${args[i]}`)
+	var arg = args[i];
+	if (arg.includes('\"')) {
+		//remove broken arg
+		args.splice(i, 1);
+		
+		if (debug) console.log(`Attempting to fix broken argument: ${arg}`);
+		if (debug) console.log('If you are experiencing issues, try avoiding backslashes before quotation marks ("C:\\my directory\\\")');
+		//insert split arg back into args
+		var split = arg.split('\"');
+		
+		if (debug) console.log(`split arr = ${JSON.stringify(split)}`);
+		//push first argument back into args (which should be a directory that contains spaces)
+		args.push(split.splice(0, 1)[0]);
+		//there theoretically should only ever be one quotation mark inside the arg, but we'll do a for loop anyways
+		for (var itm of split) {
+			itm = itm.trim();
+			//now, break it up by spaces, because the backslash screwed with our multiple arguments
+			var split2 = itm.split(' ');
+			if (debug) console.log(`split2 arr = ${JSON.stringify(split2)}`);
+			for (var itm2 of split2) {
+				if (itm2) args.push(itm2);
+			}
+		}
+	}
+}
+
+for (var i = 0; i < args.length; i++) {
+	var arg = args[i];
+	//Treat any argument starting with a - as an option
+	if (arg.startsWith('-')) {
+		switch (arg.toLowerCase()) {
+			case '-y':
+			case '--yes':
+				autoAnswerYes = true;
+				args.splice(i, 1);
+				i--;
+				break;
+			case '-o':
+			case '--openaftercomplete':
+				openAfterComplete = true;
+				args.splice(i, 1);
+				i--;
+				break;
 			case '-s':
 			case '--showaftercomplete':
 				showAfterComplete = true;
+				args.splice(i, 1);
+				i--;
 				break;
 			case '-d':
 			case '--debug':
 				debug = true;
+				args.splice(i, 1);
+				i--;
 				break;
-		case 'help':
-		case '-help':
-		case '--help':
-			printHelp();
-			process.exit(0);
+			case 'help':
+			case '-help':
+			case '--help':
+				printHelp();
+				process.exit(0);
+			default:
+				console.log(`Unrecognized argument ${arg}. Run pack-mmip --help.`);
+				process.exit(0);
+		}
 	}
 }
 
-if (debug) console.log(process.argv);
+var dirCalled = args[0];
+var dirToArchive = args[1];
+var pathToExtension = args[2];
 
-//if the first arg is some form of 'help', print help info then exit
-if (dirCalled == 'help' || dirCalled == '-help' || dirCalled == '--help') {
-	printHelp();
-	process.exit(0);
-}
+if (debug) console.log(`argv=${JSON.stringify(process.argv)}`);
+if (debug) console.log(`args=${JSON.stringify(args)}`);
 
 if (!dirCalled) {
 	console.log('dirCalled is undefined. You must run this script from the provided batch file.');
+	process.exit(1);
 }
 
 if (!dirToArchive) {
@@ -70,6 +122,7 @@ if (!dirToArchive) {
 	process.exit(1);
 }
 
+/*
 // If there are spaces in dirToArchive, Node will screw up with parsing the arguments.
 // pack-mmip "./foo bar/" baz will cause process.argv[3] to be '.\\foo bar" baz'
 //	This one handles if you used doublequotes
@@ -78,7 +131,6 @@ if (dirToArchive.includes('\"')) {
 	if (debug) console.log("There is a space in the dirToArchive argument; Attempting to parse the correct arguments");
 	dirToArchive = split[0];
 	pathToExtension = ('' + split[1]).trim(); // trim because it might include spaces
-	if (debug) console.log(`dirToArchive = "${dirToArchive}"; pathToExtension = "${pathToExtension}"`);
 }
 //	This one handles if you used singlequotes
 else if (dirToArchive.includes('\'')) {
@@ -86,8 +138,10 @@ else if (dirToArchive.includes('\'')) {
 	if (debug) console.log("There is a space in the dirToArchive argument; Attempting to parse the correct arguments");
 	dirToArchive = split[0];
 	pathToExtension = ('' + split[1]).trim(); // trim because it might include spaces
-	if (debug) console.log(`dirToArchive = "${dirToArchive}"; pathToExtension = "${pathToExtension}"`);
 }
+*/
+
+if (debug) console.log(`dirToArchive = "${dirToArchive}"; pathToExtension = "${pathToExtension}"`);
 
 // if no path to extension is specified, then we can give it the same name as the directory
 if (!pathToExtension) {
@@ -107,7 +161,7 @@ var resultFilePath = path.resolve(pathToExtension);
 
 //check if path-to-archive exists
 if (!fs.existsSync(pathToArchive)) {
-	console.log(`Error: Path "${pathToArchive}" does not exist`);
+	console.log(`${'Error:'.brightRed} Path "${pathToArchive}" does not exist`);
 	process.exit(1);
 }
 
