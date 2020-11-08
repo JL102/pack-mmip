@@ -166,11 +166,11 @@ if (!fs.existsSync(pathToArchive)) {
 }
 
 //check if destination is inside dirToArchive
-if (resultFilePath.startsWith(pathToArchive + '\\') && !autoAnswerYes) {
-	let question = '\nWarning: '.brightRed + 'Destination file is inside the directory that will be archived. This may cause recursive issues. \nProceed? (yes): '
+if (resultFilePath.startsWith(pathToArchive + '\\')) {
+	let question = '\nWarning: '.brightRed + 'Destination file is inside the directory that will be archived. This may cause recursive issues. \nProceed? (no): '
 	rl.question(question, (proceed) => {
 		
-		if (proceed == '' || proceed.toLowerCase().startsWith('y')) {
+		if (proceed.toLowerCase().startsWith('y')) {
 			//next step: check if file exists
 			checkExists();
 		}
@@ -269,10 +269,10 @@ function finish() {
 		
 		//Show parent folder after complete
 		let parentPath = path.resolve(resultFilePath, '../');
-		//let p = spawn('explorer', [`${resultFilePath},`, '/select']);
-		let p1 = spawn('explorer', [parentPath]);
+		let p = spawn('explorer', [`${resultFilePath},`, '/select'], { windowsVerbatimArguments: true });
+		//let p1 = spawn('explorer', [parentPath]);
 		
-		p1.on('error', (err) => {
+		p.on('error', (err) => {
 			p1.kill();
 			console.error(err);
 		});
