@@ -153,6 +153,9 @@ if (!pathToExtension) {
 var pathToArchive = path.resolve(dirToArchive);
 //add .mmip to extension path
 if (!pathToExtension.endsWith('.mmip')) {
+	if (pathToExtension.endsWith('\\') || pathToExtension.endsWith('/')) {
+		pathToExtension = pathToExtension.substring(0, pathToExtension.length - 1);
+	}
 	pathToExtension = pathToExtension + '.mmip';
 }
 var resultFilePath = path.resolve(pathToExtension);
