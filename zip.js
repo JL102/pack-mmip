@@ -3,16 +3,16 @@ const fs = require('fs');
 const readline = require('readline');
 const { spawn } = require('child_process');
 const { platform } = require('os');
-var archiver, openExplorer;
+var archiver;
 
 const rl = readline.createInterface({
 	input: process.stdin,
 	output: process.stdout
 });
 
+// External dependencies
 try {
 	archiver = require('archiver');
-	openExplorer = require('open-file-explorer');
 	require('colors');
 }
 catch (err) {
@@ -20,16 +20,46 @@ catch (err) {
 	process.exit(0);
 }
 
-var autoAnswerYes = false, openAfterComplete = false, showAfterComplete = false, debug = false;
+var autoAnswerYes = false, 
+	debug = false,
+	ignoreConfig = false,
+	nameZipInstead = false,
+	openAfterComplete = false, 
+	putFileIntoBin = false,
+	showAfterComplete = false,
+	runningConfiguration = false;
 
-if (process.env.NODE_ENV == 'debug') debug = true;
+/* === Reading configuration === */
 
-if (debug) console.log(process.argv);
+//we have to search for ignoreConfig and nameZipInstead first
+for (var arg of process.argv) {
+	if (arg.toLowerCase() == '-i' || arg.toLowerCase() == '--ignoredefault' || arg.toLowerCase() == '--ignoredefaults') ignoreConfig = true;
+	if (arg == '--extension-zip') nameZipInstead = true;
+}
 
-//duplicate process.argv
+var configPath;
+if (nameZipInstead) configPath = path.join(__dirname, 'config-pack-zip.json');
+else configPath = path.join(__dirname, 'config-pack-mmip.json');
+
+if (fs.existsSync(configPath) && !ignoreConfig) {
+	try {
+		//Read configuration file & update default values
+		let config = require(configPath);
+		openAfterComplete = config.openAfterComplete;
+		showAfterComplete = config.showAfterComplete;
+		putFileIntoBin = config.putFileIntoBin;
+		debug = config.debug;
+	}
+	catch (err) {
+		console.warn('Configuration file is invalid JSON. Deleting & proceeding...');
+		fs.unlinkSync(configPath);
+	}
+}
+
+/* === Argument handling === */
+
 var args = [];
 for (var i = 2; i < process.argv.length; i++) args.push(process.argv[i]);
-
 
 for (var arg of args) if (arg.includes('\"'))
 	console.log(`${'Warning: '.yellow} Command line arguments may be broken. If you are experiencing issues, try avoiding putting backslashes before quotation marks ("C:\\my directory\\\")`);
@@ -41,12 +71,10 @@ for (var i = 0; i < args.length; i++) {
 	if (arg.includes('\"')) {
 		//remove broken arg
 		args.splice(i, 1);
-		
 		if (debug) console.log(`Attempting to fix broken argument: ${arg}`);
 		if (debug) console.log('If you are experiencing issues, try avoiding backslashes before quotation marks ("C:\\my directory\\\")');
 		//insert split arg back into args
 		var split = arg.split('\"');
-		
 		if (debug) console.log(`split arr = ${JSON.stringify(split)}`);
 		//push first argument back into args (which should be a directory that contains spaces)
 		args.push(split.splice(0, 1)[0]);
@@ -86,13 +114,34 @@ for (var i = 0; i < args.length; i++) {
 				args.splice(i, 1);
 				i--;
 				break;
+			case '-b':
+			case '--putfileintobin':
+				putFileIntoBin = true;
+				args.splice(i, 1);
+				i--;
+				break;
 			case '-d':
 			case '--debug':
 				debug = true;
 				args.splice(i, 1);
 				i--;
 				break;
-			case 'help':
+			case '--extension-zip':
+				//just have to splice args; we already set nameZipInstead earlier
+				args.splice(i, 1);
+				i--;
+				break;
+			case '-i':
+			case '--ignoreconfig':
+				//just have to splice args; we already set ignoreConfig earlier
+				args.splice(i, 1);
+				i--;
+				break;
+			case '-config':
+			case '--config':
+				runConfiguration();
+				runningConfiguration = true;
+				break;
 			case '-help':
 			case '--help':
 				printHelp();
@@ -102,89 +151,94 @@ for (var i = 0; i < args.length; i++) {
 				process.exit(0);
 		}
 	}
+	//special case for "pack-mmip config"
+	else if (arg == 'config') {
+		runConfiguration();
+		runningConfiguration = true;
+	}
+	//special case for "pack-mmip help"
+	else if (arg == 'help') {
+		printHelp();
+		process.exit(0);
+	}
 }
-
-var dirCalled = args[0];
-var dirToArchive = args[1];
-var pathToExtension = args[2];
-
-if (debug) console.log(`argv=${JSON.stringify(process.argv)}`);
 if (debug) console.log(`args=${JSON.stringify(args)}`);
 
-if (!dirCalled) {
-	console.log('dirCalled is undefined. You must run this script from the provided batch file.');
-	process.exit(1);
-}
+//only run if we're not doing configuration (hacky, i know, but w/e)
+if (!runningConfiguration) {
+	
+	/* === Path-related arguments === */
 
-if (!dirToArchive) {
-	let printStr = 'USAGE: \n\tpack-mmip (path to directory) ([optional] path to packed extension OR just its name) (options)\nFor more help, run "pack-mmip -help"';
-	console.log(printStr);
-	process.exit(1);
-}
+	var dirCalled = args[0];
+	var dirToArchive = args[1];
+	var pathToExtension = args[2];
 
-/*
-// If there are spaces in dirToArchive, Node will screw up with parsing the arguments.
-// pack-mmip "./foo bar/" baz will cause process.argv[3] to be '.\\foo bar" baz'
-//	This one handles if you used doublequotes
-if (dirToArchive.includes('\"')) {
-	let split = dirToArchive.split('\"');
-	if (debug) console.log("There is a space in the dirToArchive argument; Attempting to parse the correct arguments");
-	dirToArchive = split[0];
-	pathToExtension = ('' + split[1]).trim(); // trim because it might include spaces
-}
-//	This one handles if you used singlequotes
-else if (dirToArchive.includes('\'')) {
-	let split = dirToArchive.split('\'');
-	if (debug) console.log("There is a space in the dirToArchive argument; Attempting to parse the correct arguments");
-	dirToArchive = split[0];
-	pathToExtension = ('' + split[1]).trim(); // trim because it might include spaces
-}
-*/
-
-if (debug) console.log(`dirToArchive = "${dirToArchive}"; pathToExtension = "${pathToExtension}"`);
-
-// if no path to extension is specified, then we can give it the same name as the directory
-if (!pathToExtension) {
-	pathToExtension = dirToArchive;
-}
-
-//	===	===	===	===	===
-
-var pathToArchive = path.resolve(dirToArchive);
-//add .mmip to extension path
-if (!pathToExtension.endsWith('.mmip')) {
-	if (pathToExtension.endsWith('\\') || pathToExtension.endsWith('/')) {
-		pathToExtension = pathToExtension.substring(0, pathToExtension.length - 1);
+	if (!dirCalled) {
+		console.error('You must run this script from the provided batch file. [dirCalled is undefined]');
+		process.exit(1);
 	}
-	pathToExtension = pathToExtension + '.mmip';
-}
-var resultFilePath = path.resolve(pathToExtension);
 
-//if (debug) console.log(`pathToArchive=${pathToArchive}\nresultFilePath=${resultFilePath}`);
+	if (!dirToArchive) {
+		let printStr;
+		if (nameZipInstead) printStr = 'USAGE: \n\tpack-zip (path to directory) ([optional] path to packed extension OR just its name) (options)\nFor more help, run "pack-zip -help"';
+		else printStr = 'USAGE: \n\tpack-mmip (path to directory) ([optional] path to packed extension OR just its name) (options)\nFor more help, run "pack-mmip -help"';
+		console.log(printStr);
+		process.exit(1);
+	}
 
-//check if path-to-archive exists
-if (!fs.existsSync(pathToArchive)) {
-	console.log(`${'Error:'.brightRed} Path "${pathToArchive}" does not exist`);
-	process.exit(1);
-}
+	if (debug) console.log(`dirToArchive = "${dirToArchive}"; pathToExtension = "${pathToExtension}"`);
 
-//check if destination is inside dirToArchive
-if (resultFilePath.startsWith(pathToArchive + '\\')) {
-	let question = '\nWarning: '.brightRed + 'Destination file is inside the directory that will be archived. This may cause recursive issues. \nProceed? (no): '
-	rl.question(question, (proceed) => {
+	// if no path to extension is specified, then we can give it the same name as the directory
+	if (!pathToExtension) {
+		pathToExtension = dirToArchive;
+	}
+
+	/* === Parsing the paths === */
+
+	var pathToArchive = path.resolve(dirToArchive);
+	// remove trailing slash from extension path
+	if (pathToExtension.endsWith('\\') || pathToExtension.endsWith('/'))
+		pathToExtension = pathToExtension.substring(0, pathToExtension.length - 1);
+	// add .zip to extension if we're doing zip instead of mmip
+	if (nameZipInstead && !pathToExtension.endsWith('.zip')) pathToExtension += '.zip';
+	// otherwise, add .mmip to extension
+	else if (!pathToExtension.endsWith('.mmip')) pathToExtension = pathToExtension + '.mmip';
+
+	var resultFilePath = path.resolve(pathToExtension);
+
+	//put result file into a "bin" subfolder
+	if (putFileIntoBin) {
+		let dirname = path.dirname(resultFilePath);
+		let basename = path.basename(resultFilePath);
 		
-		if (proceed.toLowerCase().startsWith('y')) {
-			//next step: check if file exists
-			checkExists();
-		}
-		else {
-			rl.close();
-		}
-	})
-}
-else {
-	//next step: check if file exists
-	checkExists();
+		dirname = path.join(dirname, 'bin');
+		resultFilePath = path.join(dirname, basename);
+	}
+
+	//check if path-to-archive exists
+	if (!fs.existsSync(pathToArchive)) {
+		console.log(`${'Error:'.brightRed} Path "${pathToArchive}" does not exist`);
+		process.exit(1);
+	}
+
+	//check if destination is inside dirToArchive
+	if (resultFilePath.startsWith(pathToArchive + '\\')) {
+		//recursion warning (default no)
+		let question = '\nWarning: '.brightRed + 'Destination file is inside the directory that will be archived. This may cause recursive issues. \nProceed? (no): '
+		rl.question(question, (proceed) => {
+			if (proceed.toLowerCase().startsWith('y')) {
+				//next step: check if file exists
+				checkExists();
+			}
+			else {
+				rl.close();
+			}
+		})
+	}
+	else {
+		//next step: check if file exists
+		checkExists();
+	}
 }
 
 //check if destination file already exists
@@ -208,6 +262,8 @@ function checkExists() {
 		begin();
 	}
 }
+
+/* === Finally, begin archiving process === */
 
 function begin() {
 	console.log(`\nGoing to zip: ${pathToArchive.brightYellow}`);
@@ -267,15 +323,18 @@ function begin() {
 
 function finish() {
 	
+	var fileStats = fs.statSync(resultFilePath);
+	console.log('Double checking file size: ' + fileStats.size / 1000 + ' KiB');
+	
 	if (showAfterComplete) {
 		console.log('Opening parent folder');
 		
 		//Show parent folder after complete
 		let parentPath = path.resolve(resultFilePath, '../');
-		let p = spawn('explorer', [`${resultFilePath},`, '/select'], { windowsVerbatimArguments: true });
+		let p1 = spawn('explorer', [`${resultFilePath},`, '/select'], { windowsVerbatimArguments: true });
 		//let p1 = spawn('explorer', [parentPath]);
 		
-		p.on('error', (err) => {
+		p1.on('error', (err) => {
 			p1.kill();
 			console.error(err);
 		});
@@ -299,15 +358,70 @@ function finish() {
 
 function printHelp() {
 	let helpStr =
-		'\nAutomatically packs an MMIP extension for MediaMonkey 5.\n\n'
+		'\nAutomatically packs an MMIP extension for MediaMonkey.\n\n'
 		+ 'USAGE: \n'
-		+ '\tpack-mmip (path to directory) ([optional] path to packed extension OR just its name) (options)\n'
+		+ '\t'+'pack-mmip'.brightYellow+' (path to directory) ([optional] path to packed extension OR just its name) (options)\n'
 		+ 'OPTIONS: \n'
-		+ '\t-y \t--Yes \t\t\tAutomatically answer "yes" to prompts\n'
-		+ '\t-o \t--OpenAfterComplete\tOpen file (Install to MediaMonkey) after complete\n'
-		+ '\t-s \t--ShowAfterComplete\tShow in folder after complete\n'
-		+ '\t-d \t--debug\tDebug logs. Please use this if you encounter a bug, and paste the logs into a new GitHub issue.'
+		+ '\t-y \t--Yes'.brightCyan+'\t\t\tAutomatically answer "yes" to prompts\n'
+		+ '\t-o \t--OpenAfterComplete'.brightCyan+'\tOpen file (Install to MediaMonkey) after complete\n'
+		+ '\t-s \t--ShowAfterComplete'.brightCyan+'\tShow in folder after complete\n'
+		+ '\t-b \t--PutFileIntoBin'.brightCyan+'\tPut resulting file into a subfolder named "bin"\n'
+		+ '\t-d \t--Debug'.brightCyan+'\t\t\tDebug logs. Please use this if you encounter a bug, and paste the logs into a new GitHub issue.\n'
+		+ '\t-i \t--IgnoreDefaults'.brightCyan+'\tIgnore configuration rules\n'
+		+ '\nTO CONFIGURE DEFAULT BEHAVIOR:\n'
+		+ '\tpack-mmip config'.brightYellow+'\t\tDifferent configuration files are saved for pack-mmip and pack-zip.\n'
 		+ '\nIf path to packed extension is not specified, it will default to the name of the folder.\n'
-	//+ '\nNOTE: The packed extension will be placed in the directory that this script was called from.';
+		+ '\nAdditionally comes with a command '+'pack-zip'.brightYellow+' if you wish to use it for zip files instead of just MMIP.\n'
+		//+ '\nNOTE: The packed extension will be placed in the directory that this script was called from.';
 	console.log(helpStr);
+}
+
+function runConfiguration(){
+	var config = {};
+	
+	if (fs.existsSync(configPath)) {
+		let question = 'Configuration already exists.' + '\nOverwrite? (yes): ';
+		rl.question(question, (overwrite) => {
+			if (overwrite == '' || overwrite.toLowerCase().startsWith('y')) {
+				_runConfiguration();
+			}
+		});
+	}
+	else {
+		_runConfiguration();
+	}
+	
+	function _runConfiguration(){
+		//Open after complete
+		var question;
+		if (nameZipInstead) question = 'Always open files after complete? (Y/N): ';
+		else question = 'Always install extension after complete? (Y/N): ';
+		rl.question(question, answer => {
+			config.openAfterComplete = (answer.toLowerCase().startsWith('y')) ? true : false;
+			//Show after complete
+			question = 'Always show in folder after complete? (Y/N): ';
+			rl.question(question, answer => {
+				config.showAfterComplete = (answer.toLowerCase().startsWith('y')) ? true : false;
+				//Put file into bin
+				question = 'Always put files into a subfolder named "bin"? (Y/N): ';
+				rl.question(question, answer => {
+					config.putFileIntoBin = (answer.toLowerCase().startsWith('y')) ? true : false;
+					//debug
+					question = 'Always enable debug mode? (Y/N): ';
+					rl.question(question, answer => {
+						config.debug = (answer.toLowerCase().startsWith('y')) ? true : false;
+						//Now, write to file
+						fs.writeFileSync(configPath, JSON.stringify(config, 0, 2));
+						let str = `Configuration saved!\n`
+							+ `\tOpenAfterComplete: ${String(config.openAfterComplete).toUpperCase()}\n`
+							+ `\tShowAfterComplete: ${String(config.showAfterComplete).toUpperCase()}\n`
+							+ `\tPutFileIntoBin:    ${String(config.putFileIntoBin).toUpperCase()}\n`
+							+ `\tDebug:             ${String(config.debug).toUpperCase()}\n`
+						console.log(str);
+						rl.close();
+					});
+				});
+			});
+		});
+	}
 }
