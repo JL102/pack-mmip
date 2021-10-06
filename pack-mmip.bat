@@ -1,2 +1,2 @@
 @echo off
-node "%~dp0zip.js" "%CD%" %*
+node "%~dp0/bin/pack-mmip.js" %*
