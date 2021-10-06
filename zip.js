@@ -399,7 +399,7 @@ module.exports = {
 				+ 'Additionally comes with a command '+'pack-zip'.brightYellow+' if you wish to use it for zip files instead of just MMIP.\n'
 				+ '\nADDITIONAL UTILITIES:\n'
 				+ '\t--create-symlink'.brightCyan+'\t\tTool that creates a symbolic link from your install\'s scripts folder to \n\t\t\t\t\tyour project folder, making it easier for development. Just restart\n\t\t\t\t\tMediaMonkey for your changes to take effect, instead of having to\n\t\t\t\t\tre-pack and re-install the addon.\n'
-				+ '\t--init \t--init-project'.brightCyan+'\t\tSimilar to '+'npm init'.brightYellow+', this tool helps initialize an addon project\n\t\t\t\t\tby creating info.json and prompting for each item.'
+				// + '\t--init \t--init-project'.brightCyan+'\t\tSimilar to '+'npm init'.brightYellow+', this tool helps initialize an addon project\n\t\t\t\t\tby creating info.json and prompting for each item.'
 				//+ '\nNOTE: The packed extension will be placed in the directory that this script was called from.';
 			console.log(helpStr);
 		}

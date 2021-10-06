@@ -31,8 +31,6 @@ ADDITIONAL UTILITIES:
                                         your project folder, making it easier for development. Just restart
                                         MediaMonkey for your changes to take effect, instead of having to
                                         re-pack and re-install the addon.
-        --init  --init-project          Similar to npm init, this tool helps initialize an addon project
-                                        by creating info.json and prompting for each item.
 ```
 
 Examples:
