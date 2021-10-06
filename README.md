@@ -36,7 +36,7 @@ ADDITIONAL UTILITIES:
 ```
 
 Examples:
-```
+```sh
 # Packs C:/projects/MyPackage into C:/projects/MyPackage.mmip
 pack-mmip C:/projects/MyPackage C:/projects/MyPackage.mmip
 
@@ -51,3 +51,9 @@ pack-mmip ./ ../MyPackage -s
 # The -o argument will attempt to run the file, causing MediaMonkey to install it.
 pack-mmip ./ ../MyPackage -o
 ```
+
+### Installation from source
+1. Download as a zip, and extract it to the folder of your choice
+1. Run `npm install`
+1. Add the folder to your system PATH
+1. Then, you can run `pack-mmip`.

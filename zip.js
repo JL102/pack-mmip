@@ -200,8 +200,8 @@ module.exports = {
 		
 			if (!dirToArchive) {
 				let printStr;
-				if (nameZipInstead) printStr = 'USAGE: \n\tpack-zip (path to directory) ([optional] path to packed extension OR just its name) (options)\nFor more help, run "pack-zip -help"';
-				else printStr = 'USAGE: \n\tpack-mmip (path to directory) ([optional] path to packed extension OR just its name) (options)\nFor more help, run "pack-mmip -help"';
+				if (nameZipInstead) printStr = 'USAGE: \n\tpack-zip (path to directory) ([optional] path to packed extension OR just its name) (options)\nFor more help, run "pack-zip --help"';
+				else printStr = 'USAGE: \n\tpack-mmip (path to directory) ([optional] path to packed extension OR just its name) (options)\nFor more help, run "pack-mmip --help"';
 				console.log(printStr);
 				process.exit(1);
 			}
