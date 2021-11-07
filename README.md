@@ -19,6 +19,9 @@ OPTIONS:
         -d      --Debug                 Debug logs. Please use this if you encounter a bug, and paste the logs into a new GitHub issue.
         -i      --IgnoreDefaults        Ignore configuration rules
 
+TO IGNORE CERTAIN FILES:
+                                        Add a file named .mmipignore in your project root. It uses glob syntax
+                                        similar to .gitignore (see https://www.npmjs.com/package/glob)
 TO CONFIGURE DEFAULT BEHAVIOR:
         pack-mmip config                
 		pack-zip config					Different configuration files are saved for pack-mmip and pack-zip.

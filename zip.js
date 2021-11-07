@@ -3,7 +3,11 @@ const fs = require('fs');
 const readline = require('readline');
 const { spawn } = require('child_process');
 const { platform } = require('os');
-var archiver;
+const archiver = require('archiver');
+const glob = require('glob');
+const minimatch = require('minimatch');
+const { filter } = require('minimatch');
+require('colors');
 
 const rl = readline.createInterface({
 	input: process.stdin,
@@ -11,14 +15,15 @@ const rl = readline.createInterface({
 });
 
 // External dependencies
-try {
-	archiver = require('archiver');
-	require('colors');
-}
-catch (err) {
-	console.log('Could not find dependencies. Try going to the installation directory and running "npm install".')
-	process.exit(0);
-}
+// try {
+// 	archiver = require('archiver');
+// 	glob = require('glob');
+// 	require('colors');
+// }
+// catch (err) {
+// 	console.log('Could not find dependencies. Try going to the installation directory and running "npm install".')
+// 	process.exit(0);
+// }
 
 module.exports = {
 	init(mode) {
@@ -288,6 +293,52 @@ module.exports = {
 			}
 		}
 		
+		function getFileListWithIgnore(pathToArchive) {
+			return new Promise((resolve, reject) => {
+				var ignoreFile = path.join(pathToArchive, '.mmipignore');
+				var ignoreString;
+				if (fs.existsSync(ignoreFile)) {
+					ignoreString = fs.readFileSync(ignoreFile, 'utf-8');
+					ignoreString = ignoreString.replace(/\r/g, '');			// remove carriage return
+				}
+				var ignoreGlobs = (ignoreString) ? ignoreString.split('\n') : ['*.zip', '*.mmip'];
+				ignoreGlobs.push('.mmipignore');
+				
+				console.log(`Ignoring the following file(s): ${(ignoreGlobs.join(', ')).brightYellow}`);
+				
+				var filteredMatches = [];
+				
+				var mg = new glob.Glob(path.join(pathToArchive, '**'), 
+					{}, 
+					(err, matches) => {
+						if (err) return reject(err); 
+						
+						var minimatchOpts = {
+							matchBase: true,
+						}
+						
+						for (let match of matches) {
+							let doAdd = true;
+							// Check if it matches any of the ignore patterns
+							for (let glob of ignoreGlobs) {
+								if (minimatch(match, glob, minimatchOpts)) {
+									doAdd = false;
+								}
+							}
+							if (doAdd) {
+								let relativePath = path.relative(pathToArchive, match);
+								if (relativePath) filteredMatches.push(match); // to remove the "base folder" match
+							}
+							else if (debug) console.log(`Skipping ${match}`);
+						}
+						console.log(`${String(matches.length - filteredMatches.length - 1).brightYellow} files skipped.\n`);
+						
+						resolve(filteredMatches);
+					}
+				);
+			})
+		}
+		
 		/* === Finally, begin archiving process === */
 		
 		function begin() {
@@ -332,18 +383,28 @@ module.exports = {
 			// good practice to catch this error explicitly
 			archive.on('error', function (err) {
 				console.log('Could not write to file. Is it open in another program? (archiver error)');
+				if (debug) console.error(err);
 				process.exit(1);
 			});
 		
 			// pipe archive data to the file
 			archive.pipe(output);
-		
-			// append files from a sub-directory, putting its contents at the root of archive
-			archive.directory(pathToArchive, false);
-		
-			// finalize the archive (ie we are done appending files but streams have to finish yet)
-			// 'close', 'end' or 'finish' may be fired right after calling this method so register to them beforehand
-			archive.finalize();
+			
+			getFileListWithIgnore(pathToArchive)
+			.catch(err => {
+				console.error(err);
+				process.exit(1);
+			})
+			.then(paths => {
+				for (let file of paths) {
+					if (debug) console.log(file);
+					archive.file(file, {name: path.relative(pathToArchive, file)});
+				}
+				
+				// finalize the archive (ie we are done appending files but streams have to finish yet)
+				// 'close', 'end' or 'finish' may be fired right after calling this method so register to them beforehand
+				archive.finalize();
+			});
 		}
 		
 		function finish() {
@@ -391,9 +452,11 @@ module.exports = {
 				+ '\t-o \t--OpenAfterComplete'.brightCyan+'\tOpen file (Install to MediaMonkey) after complete\n'
 				+ '\t-s \t--ShowAfterComplete'.brightCyan+'\tShow in folder after complete\n'
 				+ '\t-b \t--PutFileIntoBin'.brightCyan+'\tPut resulting file into a subfolder named "bin"\n'
-				+ '\t-d \t--Debug'.brightCyan+'\t\t\tDebug logs. Please use this if you encounter a bug, and paste the logs into a new GitHub issue.\n'
+				+ '\t-d \t--Debug'.brightCyan+'\t\t\tDebug logs. Please use this if you encounter a bug, and paste the\n\t\t\t\t\tlogs into a new GitHub issue.\n'
 				+ '\t-i \t--IgnoreDefaults'.brightCyan+'\tIgnore configuration rules\n'
-				+ '\nTO CONFIGURE DEFAULT BEHAVIOR:\n'
+				+ '\nTO IGNORE CERTAIN FILES:\n'
+				+ '\t\t\t\t\tAdd a file named '+'.mmipignore'.brightCyan+' in your project root. It uses glob syntax\n\t\t\t\t\tsimilar to .gitignore (see https://www.npmjs.com/package/glob)\n'
+				+ 'TO CONFIGURE DEFAULT BEHAVIOR:\n'
 				+ '\tpack-mmip config'.brightYellow+'\t\tDifferent configuration files are saved for pack-mmip and pack-zip.\n'
 				+ '\nIf path to packed extension is not specified, it will default to the name of the folder.\n'
 				+ 'Additionally comes with a command '+'pack-zip'.brightYellow+' if you wish to use it for zip files instead of just MMIP.\n'
