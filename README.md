@@ -12,28 +12,40 @@ Automatic packer for MediaMonkey Extension (MMIP) files. Requires Node.js and NP
 pack-mmip (path to directory) (path to packed extension OR just its name) (options)
 
 OPTIONS:
-        -y      --Yes                   Automatically answer "yes" to prompts
+        -a      --AppendVersion         Read the project's version from its info.json and append it to the
+                                        filename. For example: MyAddon-1.2.3.mmip
+        -b      --PutFileIntoBin        Put resulting file into a subfolder named "bin"
+        -d      --Debug                 Debug logs. Please use this if you encounter a bug, and paste the
+                                        logs into a new GitHub issue.
+        -h      --help                  Print this help text and exit
+        -i      --IgnoreDefaults        Ignore configuration rules
         -o      --OpenAfterComplete     Open file (Install to MediaMonkey) after complete
         -s      --ShowAfterComplete     Show in folder after complete
-        -b      --PutFileIntoBin        Put resulting file into a subfolder named "bin"
-        -d      --Debug                 Debug logs. Please use this if you encounter a bug, and paste the logs into a new GitHub issue.
-        -i      --IgnoreDefaults        Ignore configuration rules
+        -v      --version               Print version and exit
+        -y      --Yes                   Automatically answer "yes" to prompts
 
+        -p      --PreambleFile <name>   File containing a preamble to be added to the top of text files.
+        --preamble-<filetype> <pattern> Pattern for the preamble to be inserted into files of the specified
+                                        extension, most notably because different types of code have different
+                                        patterns for comments. Use %s for where the preamble text should go.
+                                        For example: --preamble-js "/* %s */" --preamble-html "<!-- %s -->"
 TO IGNORE CERTAIN FILES:
-                                        Add a file named .mmipignore in your project root. It uses glob syntax
-                                        similar to .gitignore (see https://www.npmjs.com/package/glob)
+                                        Add a file named .mmipignore or .archiveignore in your project root.
+                                        It uses glob syntax similar to .gitignore
+                                        (see https://www.npmjs.com/package/glob)
 TO CONFIGURE DEFAULT BEHAVIOR:
-        pack-mmip config                
-		pack-zip config					Different configuration files are saved for pack-mmip and pack-zip.
+        pack-mmip config                Different configuration files are saved for pack-mmip and pack-zip.
 
 If path to packed extension is not specified, it will default to the name of the folder.
-Additionally comes with a command pack-zip if you wish to use it for zip files instead of just MMIP.
+Additionally comes with a command pack-zip if you wish to use it to output a ZIP file instead of MMIP.
 
 ADDITIONAL UTILITIES:
-        --create-symlink                Tool that creates a symbolic link from your install's scripts folder to
+        --create-symlink <path>         Tool that creates a symbolic link from your install's scripts folder to
                                         your project folder, making it easier for development. Just restart
                                         MediaMonkey for your changes to take effect, instead of having to
                                         re-pack and re-install the addon.
+        --init                          Tool that automatically creates a new info.json file in the current
+                                        folder, after prompting for title, ID, version, etc. Similar to `npm init`.
 ```
 
 Examples:

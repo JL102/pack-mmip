@@ -2,28 +2,15 @@ const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
 const { spawn } = require('child_process');
-const { platform } = require('os');
 const archiver = require('archiver');
 const glob = require('glob');
 const minimatch = require('minimatch');
-const { filter } = require('minimatch');
 require('colors');
 
 const rl = readline.createInterface({
 	input: process.stdin,
 	output: process.stdout
 });
-
-// External dependencies
-// try {
-// 	archiver = require('archiver');
-// 	glob = require('glob');
-// 	require('colors');
-// }
-// catch (err) {
-// 	console.log('Could not find dependencies. Try going to the installation directory and running "npm install".')
-// 	process.exit(0);
-// }
 
 module.exports = {
 	init(mode) {
@@ -34,15 +21,19 @@ module.exports = {
 			openAfterComplete = false, 
 			putFileIntoBin = false,
 			showAfterComplete = false,
-			doingAlternateTask = false,
-			doingInitProject = false;
+			appendVersion = false,
+			preambleFilePath,
+			preambleFileContents,
+			preambleCommentPatterns = {};
 		
 		/* === Reading configuration === */
 		
-		//we have to search for ignoreConfig and nameZipInstead first
-		for (var arg of process.argv) {
-			if (arg.toLowerCase() == '-i' || arg.toLowerCase() == '--ignoredefault' || arg.toLowerCase() == '--ignoredefaults') ignoreConfig = true;
+		//we have to search for some of our flags first: ignoreConfig, debug, autoAnswerYes, and nameZipInstead
+		for (let arg of process.argv) {
+			arg = arg.toLowerCase();
+			if (arg == '-i' || arg == '--ignoredefault' || arg == '--ignoredefaults') ignoreConfig = true;
 			if (arg == '--extension-zip') nameZipInstead = true;
+			if (arg === '-y' || arg == '--yes') autoAnswerYes = true;
 		}
 		
 		if (mode === 'zip') nameZipInstead = true;
@@ -66,26 +57,32 @@ module.exports = {
 			}
 		}
 		
+		// aaand debug has to be read after config is loaded
+		for (let arg of process.argv) {
+			arg = arg.toLowerCase();
+			if (arg === '--debug' || arg === '-d') debug = true;
+		}
+		
 		/* === Argument handling === */
 		
 		var args = [];
 		for (var i = 2; i < process.argv.length; i++) args.push(process.argv[i]);
 		
 		for (var arg of args) if (arg.includes('\"'))
-			console.log(`${'Warning: '.yellow} Command line arguments may be broken. If you are experiencing issues, try avoiding putting backslashes before quotation marks ("C:\\my directory\\\")`);
+			console.log(`${'Warning: '.red} Command line arguments may be broken. If you are experiencing issues, try avoiding putting backslashes before quotation marks ("C:\\my directory\\\")`);
 		
 		//fix broken args which include quotation marks
 		for (var i = 0; i < args.length; i++) {
-			if (debug) console.log(`i=${i}, arg=${args[i]}`)
+			debugLog(`i=${i}, arg=${args[i]}`);
 			var arg = args[i];
 			if (arg.includes('\"')) {
 				//remove broken arg
 				args.splice(i, 1);
-				if (debug) console.log(`Attempting to fix broken argument: ${arg}`);
-				if (debug) console.log('If you are experiencing issues, try avoiding backslashes before quotation marks ("C:\\my directory\\\")');
+				debugLog(`Attempting to fix broken argument: ${arg}`);
+				debugLog('If you are experiencing issues, try avoiding backslashes before quotation marks ("C:\\my directory\\\")');
 				//insert split arg back into args
 				var split = arg.split('\"');
-				if (debug) console.log(`split arr = ${JSON.stringify(split)}`);
+				debugLog(`split arr = ${JSON.stringify(split)}`);
 				//push first argument back into args (which should be a directory that contains spaces)
 				args.push(split.splice(0, 1)[0]);
 				//there theoretically should only ever be one quotation mark inside the arg, but we'll do a for loop anyways
@@ -93,7 +90,7 @@ module.exports = {
 					itm = itm.trim();
 					//now, break it up by spaces, because the backslash screwed with our multiple arguments
 					var split2 = itm.split(' ');
-					if (debug) console.log(`split2 arr = ${JSON.stringify(split2)}`);
+					debugLog(`split2 arr = ${JSON.stringify(split2)}`);
 					for (var itm2 of split2) {
 						if (itm2) args.push(itm2);
 					}
@@ -101,82 +98,93 @@ module.exports = {
 			}
 		}
 		
+		let alternateTask = null; // alternate task to execute after args have been parsed
+		
 		for (var i = 0; i < args.length; i++) {
 			var arg = args[i];
 			//Treat any argument starting with a - as an option
 			if (arg.startsWith('-')) {
 				switch (arg.toLowerCase()) {
-					case '-y':
-					case '--yes':
-						autoAnswerYes = true;
-						args.splice(i, 1);
-						i--;
-						break;
 					case '-o':
 					case '--openaftercomplete':
 						openAfterComplete = true;
-						args.splice(i, 1);
-						i--;
+						args.splice(i, 1); i--;
 						break;
 					case '-s':
 					case '--showaftercomplete':
 						showAfterComplete = true;
-						args.splice(i, 1);
-						i--;
+						args.splice(i, 1); i--;
 						break;
 					case '-b':
 					case '--putfileintobin':
 						putFileIntoBin = true;
-						args.splice(i, 1);
-						i--;
+						args.splice(i, 1); i--;
 						break;
+					case '-p':
+					case '--preamblefile':
+						preambleFilePath = path.resolve(args[i + 1]);
+						args.splice(i, 2); i--; // TODO might need to be -= 2?
+						break;
+					case '-a':
+					case '--appendversion':
+						appendVersion = true;
+						args.splice(i, 1); i--;
+						break;
+					//just have to splice these args; we already set nameZipInstead, ignoreConfig, autoAnswerYes, and debug earlier
 					case '-d':
 					case '--debug':
-						debug = true;
-						args.splice(i, 1);
-						i--;
-						break;
 					case '--extension-zip':
-						//just have to splice args; we already set nameZipInstead earlier
-						args.splice(i, 1);
-						i--;
-						break;
 					case '-i':
 					case '--ignoreconfig':
-						//just have to splice args; we already set ignoreConfig earlier
-						args.splice(i, 1);
-						i--;
+					case '-y':
+					case '--yes':
+						args.splice(i, 1); i--;
 						break;
 					case '-config':
 					case '--config':
-						runConfiguration();
-						doingAlternateTask = true;
+						args.splice(i, 1); i--;
+						alternateTask = runConfiguration;
 						break;
 					case '-create-symlink':
 					case '--create-symlink':
-						doingAlternateTask = true;
-						runCreateSymlink();
+						args.splice(i, 1); i--;
+						alternateTask = runCreateSymlink;
 						break;
 					case '-init':
 					case '--init':
 					case '-init-project':
 					case '--init-project':
-						doingAlternateTask = true;
-						doingInitProject = true; // in order to support "-y" arguments, we can't run the task immediately and must wait until all arguments are filtered
+						alternateTask = runInitProject;
 						break;
 					case '-help':
 					case '--help':
 						printHelp();
 						process.exit(0);
-					default:
-						console.log(`Unrecognized argument ${arg}. Run pack-mmip --help.`);
+					case '-v':
+					case '--version':
+						printVersion();
 						process.exit(0);
+					default:
+						if (arg.toLowerCase().startsWith('--preamble-')) {
+							let preamblePattern = args[i + 1];
+							debugLog(`Parsing preamble: ${arg}, ${preamblePattern}`);
+							let fileExt = arg.split('--preamble-')[1];
+							preambleCommentPatterns[fileExt] = preamblePattern;
+							args.splice(i, 2);
+							i--;
+						}
+						else {
+							console.log(`Unrecognized argument ${arg}. Run pack-mmip --help.`);
+							process.exit(0);
+						}
 				}
 			}
 			//special case for "pack-mmip config"
 			else if (arg == 'config') {
-				runConfiguration();
-				doingAlternateTask = true;
+				alternateTask = runConfiguration;
+			}
+			else if (arg == 'init') {
+				alternateTask = runInitProject;
 			}
 			//special case for "pack-mmip help"
 			else if (arg == 'help') {
@@ -184,18 +192,40 @@ module.exports = {
 				process.exit(0);
 			}
 		}
-		if (debug) console.log(`args=${JSON.stringify(args)}`);
 		
-		if (doingInitProject) runInitProject();
+		debugLog(`args=${JSON.stringify(args)}`);
+		debugLog(`preamblePath=${preambleFilePath}`);
 		
-		//only run if we're not doing configuration (hacky, i know, but w/e)
-		if (!doingAlternateTask) {
+		if (preambleFilePath) {
+			// Preamble specified but no files to add it to
+			if (Object.keys(preambleCommentPatterns).length === 0) {
+				console.error('\nError: '.brightRed + 'Preamble file path was specified but no file extensions and comment patterns were specified.');
+				console.log('Example: ' + '--preamblefile preamble.txt --preamble-js '.brightGreen + 
+					'"/* %s */"'.brightBlue + ' --preamble-html '.brightGreen + '"<!-- %s -->"'.brightBlue);
+				process.exit(0);
+			}
+			else if (fs.existsSync(preambleFilePath)) {
+				console.log(`Adding preamble from ${preambleFilePath.brightYellow} to the following file extensions: ${Object.keys(preambleCommentPatterns).join(', ').brightYellow}`);
+				preambleFileContents = fs.readFileSync(preambleFilePath, {encoding: 'utf-8'});
+			}
+			else {
+				console.error('\nError: '.brightRed + 'Preamble file does not exist: ' + preambleFilePath.brightYellow);
+				process.exit(0);
+			}
+		}
+		
+		// Perform alternate task
+		if (alternateTask) {
+			alternateTask();
+		}
+		// Default task (packing MMIP!)
+		else {
 			
 			/* === Path-related arguments === */
 		
 			var dirCalled = process.cwd();
 			var dirToArchive = args[0];
-			var pathToExtension = args[1];
+			var pathToOutput = args[1];
 		
 			if (!dirCalled) {
 				// console.error('You must run this script from the provided batch file. [dirCalled is undefined]');
@@ -204,32 +234,41 @@ module.exports = {
 			}
 		
 			if (!dirToArchive) {
-				let printStr;
-				if (nameZipInstead) printStr = 'USAGE: \n\tpack-zip (path to directory) ([optional] path to packed extension OR just its name) (options)\nFor more help, run "pack-zip --help"';
-				else printStr = 'USAGE: \n\tpack-mmip (path to directory) ([optional] path to packed extension OR just its name) (options)\nFor more help, run "pack-mmip --help"';
-				console.log(printStr);
+				printHelp();
 				process.exit(1);
 			}
 		
-			if (debug) console.log(`dirToArchive = "${dirToArchive}"; pathToExtension = "${pathToExtension}"`);
-		
-			// if no path to extension is specified, then we can give it the same name as the directory
-			if (!pathToExtension) {
-				pathToExtension = dirToArchive;
-			}
-		
+			debugLog(`dirToArchive = "${dirToArchive}"; pathToExtension = "${pathToOutput}"`);
+			
 			/* === Parsing the paths === */
 		
 			var pathToArchive = path.resolve(dirToArchive);
+			
+			// if no path to extension is specified, then we can give it the same name as the directory
+			if (!pathToOutput) {
+				pathToOutput = path.basename(pathToArchive);
+			}
+			
 			// remove trailing slash from extension path
-			if (pathToExtension.endsWith('\\') || pathToExtension.endsWith('/'))
-				pathToExtension = pathToExtension.substring(0, pathToExtension.length - 1);
+			if (pathToOutput.endsWith('\\') || pathToOutput.endsWith('/'))
+				pathToOutput = pathToOutput.substring(0, pathToOutput.length - 1);
+			// Find the addon version and append it to the filename
+			if (appendVersion) {
+				try {
+					let infoJson = require(path.join(pathToArchive, 'info.json'));
+					pathToOutput += '-' + infoJson.version;
+				}
+				catch (err) {
+					debugError(err);
+					console.log('Error: '.brightRed + 'Could not read info.json to append the addon version');
+				}
+			}
 			// add .zip to extension if we're doing zip instead of mmip
-			if (nameZipInstead && !pathToExtension.endsWith('.zip')) pathToExtension += '.zip';
+			if (nameZipInstead && !pathToOutput.endsWith('.zip')) pathToOutput += '.zip';
 			// otherwise, add .mmip to extension
-			else if (!pathToExtension.endsWith('.mmip') && !nameZipInstead) pathToExtension = pathToExtension + '.mmip';
+			else if (!pathToOutput.endsWith('.mmip') && !nameZipInstead) pathToOutput = pathToOutput + '.mmip';
 		
-			var resultFilePath = path.resolve(pathToExtension);
+			var resultFilePath = path.resolve(pathToOutput);
 		
 			//put result file into a "bin" subfolder
 			if (putFileIntoBin) {
@@ -252,30 +291,30 @@ module.exports = {
 			}
 		
 			//check if destination is inside dirToArchive
-			if (resultFilePath.startsWith(pathToArchive + '\\')) {
-				//recursion warning (default no)
-				let question = '\nWarning: '.brightRed + 'Destination file is inside the directory that will be archived. This may cause recursive issues. \nProceed? (no): '
-				rl.question(question, (proceed) => {
-					if (proceed.toLowerCase().startsWith('y')) {
-						//next step: check if file exists
-						checkExists();
-					}
-					else {
-						rl.close();
-					}
-				})
-			}
-			else {
+			// if (resultFilePath.startsWith(pathToArchive + '\\')) {
+			// 	//recursion warning (default no)
+			// 	let question = '\nWarning: '.brightRed + 'Destination file is inside the directory that will be archived. This may cause recursive issues. \nProceed? (no): '
+			// 	rl.question(question, (proceed) => {
+			// 		if (proceed.toLowerCase().startsWith('y')) {
+			// 			//next step: check if file exists
+			// 			checkExists();
+			// 		}
+			// 		else {
+			// 			rl.close();
+			// 		}
+			// 	})
+			// }
+			// else {
 				//next step: check if file exists
 				checkExists();
-			}
+			// }
 		}
 		
 		//check if destination file already exists
 		function checkExists() {
 			if (fs.existsSync(resultFilePath) && !autoAnswerYes) {
 			
-				let question = '\nWarning: '.brightRed + resultFilePath + ' already exists.' + '\nOverwrite? (yes): ';
+				let question = '\nWarning: '.red + resultFilePath + ' already exists.' + '\nOverwrite? (yes): ';
 				rl.question(question, (overwrite) => {
 			
 					if (overwrite == '' || overwrite.toLowerCase().startsWith('y')) {
@@ -293,16 +332,27 @@ module.exports = {
 			}
 		}
 		
-		function getFileListWithIgnore(pathToArchive) {
+		function getFileListWithIgnore(pathToArchive, resultFilePath) {
 			return new Promise((resolve, reject) => {
-				var ignoreFile = path.join(pathToArchive, '.mmipignore');
-				var ignoreString;
-				if (fs.existsSync(ignoreFile)) {
-					ignoreString = fs.readFileSync(ignoreFile, 'utf-8');
-					ignoreString = ignoreString.replace(/\r/g, '');			// remove carriage return
+				
+				let ignoreString;
+				let ignoreGlobs = ['*.zip', '*.mmip']; // Default ignoreGlobs
+				
+				// Search for an ignore file
+				for (let ignoreFileName of ['.mmipignore', '.archiveignore']) {
+					let ignoreFile = path.join(pathToArchive, ignoreFileName);
+					if (fs.existsSync(ignoreFile)) {
+						console.log(`Found ignore pattern in ${ignoreFileName}`);
+						
+						ignoreString = fs.readFileSync(ignoreFile, 'utf-8');
+						ignoreString = ignoreString.replace(/\r/g, '');			// remove carriage return
+						
+						ignoreGlobs = ignoreString.split('\n');
+						ignoreGlobs.push(ignoreFileName);
+						ignoreGlobs.push(path.basename(resultFilePath)); // Add result filename to the ignore list, to avoid recursive issues, so I can turn off that warning
+						break;
+					}
 				}
-				var ignoreGlobs = (ignoreString) ? ignoreString.split('\n') : ['*.zip', '*.mmip'];
-				ignoreGlobs.push('.mmipignore');
 				
 				console.log(`Ignoring the following file(s): ${(ignoreGlobs.join(', ')).brightYellow}`);
 				
@@ -329,7 +379,7 @@ module.exports = {
 								let relativePath = path.relative(pathToArchive, match);
 								if (relativePath) filteredMatches.push(match); // to remove the "base folder" match
 							}
-							else if (debug) console.log(`Skipping ${match}`);
+							else debugLog(`Skipping ${match}`);
 						}
 						console.log(`${String(matches.length - filteredMatches.length - 1).brightYellow} files skipped.\n`);
 						
@@ -383,22 +433,33 @@ module.exports = {
 			// good practice to catch this error explicitly
 			archive.on('error', function (err) {
 				console.log('Could not write to file. Is it open in another program? (archiver error)');
-				if (debug) console.error(err);
+				debugError(err);
 				process.exit(1);
 			});
 		
 			// pipe archive data to the file
 			archive.pipe(output);
 			
-			getFileListWithIgnore(pathToArchive)
+			getFileListWithIgnore(pathToArchive, resultFilePath)
 			.catch(err => {
 				console.error(err);
 				process.exit(1);
 			})
 			.then(paths => {
+				
 				for (let file of paths) {
-					if (debug) console.log(file);
-					archive.file(file, {name: path.relative(pathToArchive, file)});
+					debugLog(file);
+					
+					let ext = path.extname(file).substring(1); // File extension without the dot
+					if (preambleFileContents && preambleCommentPatterns.hasOwnProperty(ext)) {
+						debugLog('Adding preamble');
+						let preamble = preambleCommentPatterns[ext].replace('%s', preambleFileContents);
+						let contents = preamble + '\n\n' + fs.readFileSync(file, {encoding: 'utf-8'});
+						archive.append(contents, {name: path.relative(pathToArchive, file)});
+					}
+					else {
+						archive.file(file, {name: path.relative(pathToArchive, file)});
+					}
 				}
 				
 				// finalize the archive (ie we are done appending files but streams have to finish yet)
@@ -443,48 +504,183 @@ module.exports = {
 		}
 		
 		function printHelp() {
+			
+			let command = ((nameZipInstead) ? ' pack-zip' : 'pack-mmip').brightYellow;
+			let helpHeader = (nameZipInstead) ? 
+				'Automatically packs a folder into a ZIP file. (an extra utility of pack-mmip)' : 
+				'Automatically packs an MMIP extension for MediaMonkey.';
+			
 			let helpStr =
-				'\nAutomatically packs an MMIP extension for MediaMonkey.\n\n'
+				'\n'+helpHeader+'\n\n'
 				+ 'USAGE: \n'
-				+ '\t'+'pack-mmip'.brightYellow+' (path to directory) ([optional] path to packed extension OR just its name) (options)\n'
+				+ '\t'+command+' <path to project> <[optional] path to packed extension OR just its name> <options>\n'
 				+ 'OPTIONS: \n'
-				+ '\t-y \t--Yes'.brightCyan+'\t\t\tAutomatically answer "yes" to prompts\n'
-				+ '\t-o \t--OpenAfterComplete'.brightCyan+'\tOpen file (Install to MediaMonkey) after complete\n'
-				+ '\t-s \t--ShowAfterComplete'.brightCyan+'\tShow in folder after complete\n'
+				+ '\t-a \t--AppendVersion'.brightCyan+'\t\tRead the project\'s version from its info.json and append it to the\n\t\t\t\t\tfilename. For example: MyAddon-1.2.3.mmip\n'
 				+ '\t-b \t--PutFileIntoBin'.brightCyan+'\tPut resulting file into a subfolder named "bin"\n'
 				+ '\t-d \t--Debug'.brightCyan+'\t\t\tDebug logs. Please use this if you encounter a bug, and paste the\n\t\t\t\t\tlogs into a new GitHub issue.\n'
+				+ '\t-h \t--help'.brightCyan+'\t\t\tPrint this help text and exit\n'
 				+ '\t-i \t--IgnoreDefaults'.brightCyan+'\tIgnore configuration rules\n'
+				+ '\t-o \t--OpenAfterComplete'.brightCyan+'\tOpen file (Install to MediaMonkey) after complete\n'
+				+ '\t-s \t--ShowAfterComplete'.brightCyan+'\tShow in folder after complete\n'
+				+ '\t-v \t--version'.brightCyan+'\t\tPrint version and exit\n'
+				+ '\t-y \t--Yes'.brightCyan+'\t\t\tAutomatically answer "yes" to prompts\n'
+				+ '\n'
+				+ '\t-p \t--PreambleFile <name>'.brightCyan+'\tFile containing a preamble to be added to the top of text files.\n'
+				+ '\t--preamble-<filetype> <pattern>'.brightCyan+'\tPattern for the preamble to be inserted into files of the specified\n\t\t\t\t\textension, most notably because different types of code have different\n\t\t\t\t\tpatterns for comments. Use '+'%s'.brightYellow+' for where the preamble text should go.\n\t\t\t\t\tFor example: --preamble-js "/* %s */" --preamble-html "<!-- %s -->"'
 				+ '\nTO IGNORE CERTAIN FILES:\n'
-				+ '\t\t\t\t\tAdd a file named '+'.mmipignore'.brightCyan+' in your project root. It uses glob syntax\n\t\t\t\t\tsimilar to .gitignore (see https://www.npmjs.com/package/glob)\n'
+				+ '\t\t\t\t\tAdd a file named '+'.mmipignore'.brightCyan+' or '+'.archiveignore'.brightCyan+' in your project root.\n\t\t\t\t\tIt uses glob syntax similar to .gitignore\n\t\t\t\t\t(see https://www.npmjs.com/package/glob)\n'
 				+ 'TO CONFIGURE DEFAULT BEHAVIOR:\n'
-				+ '\tpack-mmip config'.brightYellow+'\t\tDifferent configuration files are saved for pack-mmip and pack-zip.\n'
+				+ '\t'+command+' config'.brightYellow+'\t\tDifferent configuration files are saved for pack-mmip and pack-zip.\n'
 				+ '\nIf path to packed extension is not specified, it will default to the name of the folder.\n'
-				+ 'Additionally comes with a command '+'pack-zip'.brightYellow+' if you wish to use it for zip files instead of just MMIP.\n'
+				+ ((nameZipInstead) ? 
+					'The main purpose of this package is the command '+'pack-mmip'.brightYellow+', for packing MMIP extensions for MediaMonkey.\n' : 
+					'Additionally comes with a command '+'pack-zip'.brightYellow+' if you wish to use it to output a ZIP file instead of MMIP.\n'
+				)
 				+ '\nADDITIONAL UTILITIES:\n'
-				+ '\t--create-symlink'.brightCyan+'\t\tTool that creates a symbolic link from your install\'s scripts folder to \n\t\t\t\t\tyour project folder, making it easier for development. Just restart\n\t\t\t\t\tMediaMonkey for your changes to take effect, instead of having to\n\t\t\t\t\tre-pack and re-install the addon.\n'
+				+ '\t--create-symlink <path>'.brightCyan+'\t\tTool that creates a symbolic link from your install\'s scripts folder to \n\t\t\t\t\tyour project folder, making it easier for development. Just restart\n\t\t\t\t\tMediaMonkey for your changes to take effect, instead of having to\n\t\t\t\t\tre-pack and re-install the addon.\n'
+				+ '\t--init'.brightCyan+'\t\t\t\tTool that automatically creates a new info.json file in the current\n\t\t\t\t\tfolder, after prompting for title, ID, version, etc. Similar to `npm init`.'
 				// + '\t--init \t--init-project'.brightCyan+'\t\tSimilar to '+'npm init'.brightYellow+', this tool helps initialize an addon project\n\t\t\t\t\tby creating info.json and prompting for each item.'
 				//+ '\nNOTE: The packed extension will be placed in the directory that this script was called from.';
 			console.log(helpStr);
 		}
 		
-		function runInitProject() {
-			
+		function printVersion() {
+			// Simply read the version from package.json
+			let thisPackageJson = require('./package.json');
+			console.log(thisPackageJson.version);
 		}
 		
-		function runCreateSymlink() {
-			console.log('Creating symlink to project folder');
+		async function runInitProject() {
+			console.log('This utility will walk you through creating an info.json file.');
+			console.log('\nSee `pack-mmip --help` for info on how to use the rest of the tool\'s utilities.');
+			console.log('\nPress ^C at any time to quit.\n');
 			
-			var question;
-			question = 'Please enter the path to your MediaMonkey installation (leave blank to default to C:\\Program Files (x86)\\MediaMonkey 5): ';
+			let autoName = path.basename(process.cwd());
+			let title, id, description, type, version, author, minAppVersion, iconFile;
+			
+			title = await questionWithDefault(`title: (${autoName}) `, autoName);
+			let autoId = title.replace(/ /g, '-').replace(/['"()\[\]]/g, '').toLowerCase();
+			id = await questionWithDefault(`id: (${autoId})`, autoId);
+			description = await questionWithDefault('description: ', '');
+			type = await questionWithDefault('type [skin, layout, plugin, views, sync, metadata, visualization, general]: (general) ', 'general');
+			version = await questionWithDefault('version: (1.0.0) ', '1.0.0');
+			author = await questionWithDefault('author: ', '');
+			minAppVersion = await questionWithDefault('minimum compatible MediaMonkey version: (5.0.0) ', '5.0.0');
+			iconFile = await questionWithDefault('icon file: ', '');
+			
+			let newInfoJson = {
+				title,
+				id,
+				description,
+				type,
+				version,
+				author,
+				minAppVersion
+			};
+			
+			if (iconFile) newInfoJson.icon = iconFile;
+			
+			let destination = path.join(process.cwd(), 'info.json');
+			let output = JSON.stringify(newInfoJson, null, 4);
+			
+			questionAllowingAutoYes(output + '\n\nIs this OK? (yes): ', (answer) => {
+				if (answer === '' || answer.toLowerCase().startsWith('y')) {
+					// write file
+					try {
+						fs.writeFileSync(destination, output, 'utf-8');
+						
+						if (autoAnswerYes) {
+							console.log(`Wrote to ${destination}:\n\n${output}`);
+						}
+						else {
+							console.log(`Wrote to ${destination}.`);
+						}
+						rl.close();
+					}
+					catch (err) {
+						console.log(err.toString());
+						return rl.close();
+					}
+				}
+			});
+			
+			function questionWithDefault(question, defaultAns) {
+				return new Promise((resolve, reject) => {
+					if (autoAnswerYes) resolve(defaultAns);
+					else rl.question(question, (answer) => {
+						if (answer.trim() === '') {
+							resolve(defaultAns);
+						}
+						else {
+							resolve(answer);
+						}
+					})
+				})
+			}
+		}
+		
+		function runCreateSymlink() {			
+			let defaultDestPath;
+			// default to appdata folder
+			if (process.env.APPDATA && fs.existsSync(path.join(process.env.APPDATA, 'MediaMonkey5', 'Scripts'))) {
+				defaultDestPath = path.join(process.env.APPDATA, 'MediaMonkey5', 'Scripts');
+			}
+			else {
+				defaultDestPath = 'C:\\Program Files (x86)\\MediaMonkey 5\\Scripts';
+			}
+			
+			let target = args[0];
+			
+			if (!target) {
+				console.log(`Please provide the relative path to your project which you want to link to. For example: ${'pack-mmip --create-symlink ./myExtension'.brightCyan}`);
+				return rl.close();
+			}
+			
+			let pathToTarget = path.resolve(target);
+			if (!fs.existsSync(pathToTarget)) {
+				console.log(`Sorry, the provided path (${pathToTarget.brightYellow}) does not exist.`);
+				return rl.close();
+			}
+			// Attempt to read addon ID
+			let infoJsonPath = path.join(pathToTarget, 'info.json');
+			let infoJson;
+			try {
+				infoJson = require(infoJsonPath);
+				if (!infoJson.id) {
+					console.log(`Invalid info.json! Could not find addon ID.`);
+					return rl.close();
+				}
+			}
+			catch (err) {
+				console.log(`Could not read ${infoJsonPath.brightYellow}!`);
+				return rl.close();
+			}
+			
+			let question;
+			question = `Please enter the path to your MediaMonkey data folder (leave blank to default to ${defaultDestPath}): `;
 			rl.question(question, answer => {
+				// Default path: appdata/MM5 or MM5 install folder
 				if (!answer || answer.trim() == '') {
-					answer = 'C:\\Program Files (x86)\\MediaMonkey 5\\Scripts';
+					answer = defaultDestPath;
 				}
 				
 				let symlinkBase = path.resolve(answer);
 				
+				debugLog(path.join(symlinkBase, 'Portable', 'Scripts'));
+				
+				// Check for 'Portable' subfolder
+				if (fs.existsSync(path.join(symlinkBase, 'Portable', 'Scripts'))) {
+					debugLog('Switching to Portable/Scripts folder');
+					symlinkBase = path.join(symlinkBase, 'Portable', 'Scripts')
+				}
+				
 				if (path.basename(symlinkBase).toLowerCase() != 'scripts') {
 					symlinkBase = path.join(symlinkBase, 'Scripts');
+					// Special-case 'sorry' message
+					if (!fs.existsSync(symlinkBase)) {
+						console.log(`Could not find a Scripts folder (${symlinkBase.brightYellow}). Did you enter the right path?`);
+						return rl.close();
+					}
 				}
 				
 				if (!fs.existsSync(symlinkBase)) {
@@ -492,21 +688,30 @@ module.exports = {
 					return rl.close();
 				}
 				
-				question = 'Please enter the location of your project: ';
-				rl.question(question, answer => {
-					let target = path.resolve(answer);
+				// Process the destination
+				
+				// let basename = path.basename(pathToTarget);
+				let basename = infoJson.id; // addon ID
+				let symlinkPath = path.join(symlinkBase, basename);
+				
+				question = `Create junction at ${symlinkPath.brightYellow} -> ${pathToTarget.brightYellow}? (yes): `
+				questionAllowingAutoYes(question, answer => {
 					
-					if (!fs.existsSync(target)) {
-						console.log(`Sorry, the provided path (${target.brightYellow}) does not exist.`);
-						return rl.close();
+					if (answer == '' || answer.toLowerCase().startsWith('y')) {
+						try {
+							fs.symlinkSync(pathToTarget, symlinkPath, 'junction');
+							if (autoAnswerYes) console.log(`Created junction at ${symlinkPath.brightYellow} -> ${pathToTarget.brightYellow}.`) // extra information that was provided in the question
+							else console.log(`Created junction.`);
+							console.log(`Please be careful and do ${'NOT'.brightRed} uninstall the addon from within MediaMonkey. It may result in the contents of your project folder being deleted.`);
+							console.log('Instead, delete the junction manually via file explorer.');
+						}
+						catch (err) {
+							console.log(err.toString());
+						}
 					}
-					
-					let basename = path.basename(target);
-					let symlinkPath = path.join(symlinkBase, basename);
-					
-					fs.symlinkSync(target, symlinkPath, 'junction');
-					console.log(`Created junction at ${symlinkPath.brightYellow} to ${target.brightYellow}.`);
-					console.log(`Please be careful and do ${'NOT'.brightRed} tell MediaMonkey to uninstall this addon. It may result in the contents of your project folder being deleted.`);
+					else {
+						console.log('Cancelled.');
+					}
 					rl.close();
 				});
 			});
@@ -532,23 +737,23 @@ module.exports = {
 				var question;
 				if (nameZipInstead) question = 'Always open files after complete? (Y/N): ';
 				else question = 'Always install extension after complete? (Y/N): ';
-				rl.question(question, answer => {
+				questionAllowingAutoYes(question, answer => {
 					config.openAfterComplete = (answer.toLowerCase().startsWith('y')) ? true : false;
 					//Show after complete
 					question = 'Always show in folder after complete? (Y/N): ';
-					rl.question(question, answer => {
+					questionAllowingAutoYes(question, answer => {
 						config.showAfterComplete = (answer.toLowerCase().startsWith('y')) ? true : false;
 						//Put file into bin
 						question = 'Always put files into a subfolder named "bin"? (Y/N): ';
-						rl.question(question, answer => {
+						questionAllowingAutoYes(question, answer => {
 							config.putFileIntoBin = (answer.toLowerCase().startsWith('y')) ? true : false;
 							//debug
 							question = 'Always enable debug mode? (Y/N): ';
-							rl.question(question, answer => {
+							questionAllowingAutoYes(question, answer => {
 								config.debug = (answer.toLowerCase().startsWith('y')) ? true : false;
 								//Now, write to file
 								fs.writeFileSync(configPath, JSON.stringify(config, 0, 2));
-								let str = `Configuration saved!\n`
+								let str = `\nConfiguration saved to ${configPath.yellow}!\n`
 									+ `\tOpenAfterComplete: ${String(config.openAfterComplete).toUpperCase()}\n`
 									+ `\tShowAfterComplete: ${String(config.showAfterComplete).toUpperCase()}\n`
 									+ `\tPutFileIntoBin:    ${String(config.putFileIntoBin).toUpperCase()}\n`
@@ -560,6 +765,26 @@ module.exports = {
 					});
 				});
 			}
+		}
+		
+		/**
+		 * Prompt the user with `rl.question` unless autoAnswerYes is enabled. Created as a find-and-replacement for `rl.question` to avoid having to rewrite lots of code :)
+		 */
+		function questionAllowingAutoYes(question, callback) {
+			if (autoAnswerYes) {
+				callback('y');
+			}
+			else {
+				rl.question(question, callback);
+			}
+		}
+		
+		function debugLog(message) {
+			if (debug) console.log(message);
+		}
+		
+		function debugError(message) {
+			if (debug) console.error(message);
 		}
 	}
 }
