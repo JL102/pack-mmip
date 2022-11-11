@@ -280,7 +280,13 @@ module.exports = {
 				
 				// If the bin directory does not exist, create it now
 				if (!fs.existsSync(dirname)) {
-					fs.mkdirSync(dirname);
+					try {
+						fs.mkdirSync(dirname);
+					}
+					catch (err) {
+						console.log(`Couldn't make directory ${dirname}. Were multiple instances of pack-mmip running at the same time?`);
+						console.error(err);
+					}
 				}
 			}
 		
@@ -290,24 +296,8 @@ module.exports = {
 				process.exit(1);
 			}
 		
-			//check if destination is inside dirToArchive
-			// if (resultFilePath.startsWith(pathToArchive + '\\')) {
-			// 	//recursion warning (default no)
-			// 	let question = '\nWarning: '.brightRed + 'Destination file is inside the directory that will be archived. This may cause recursive issues. \nProceed? (no): '
-			// 	rl.question(question, (proceed) => {
-			// 		if (proceed.toLowerCase().startsWith('y')) {
-			// 			//next step: check if file exists
-			// 			checkExists();
-			// 		}
-			// 		else {
-			// 			rl.close();
-			// 		}
-			// 	})
-			// }
-			// else {
-				//next step: check if file exists
-				checkExists();
-			// }
+			//next step: check if file exists
+			checkExists();
 		}
 		
 		//check if destination file already exists
@@ -477,9 +467,7 @@ module.exports = {
 				console.log('Opening parent folder');
 				
 				//Show parent folder after complete
-				let parentPath = path.resolve(resultFilePath, '../');
 				let p1 = spawn('explorer', [`${resultFilePath},`, '/select'], { windowsVerbatimArguments: true });
-				//let p1 = spawn('explorer', [parentPath]);
 				
 				p1.on('error', (err) => {
 					p1.kill();
@@ -560,13 +548,13 @@ module.exports = {
 			
 			title = await questionWithDefault(`title: (${autoName}) `, autoName);
 			let autoId = title.replace(/ /g, '-').replace(/['"()\[\]]/g, '').toLowerCase();
-			id = await questionWithDefault(`id: (${autoId})`, autoId);
-			description = await questionWithDefault('description: ', '');
-			type = await questionWithDefault('type [skin, layout, plugin, views, sync, metadata, visualization, general]: (general) ', 'general');
-			version = await questionWithDefault('version: (1.0.0) ', '1.0.0');
-			author = await questionWithDefault('author: ', '');
-			minAppVersion = await questionWithDefault('minimum compatible MediaMonkey version: (5.0.0) ', '5.0.0');
-			iconFile = await questionWithDefault('icon file: ', '');
+			id = await questionWithDefault(`id: (${autoId}) `, autoId).trim();
+			description = await questionWithDefault('description: ', '').trim();
+			type = await questionWithDefault('type [skin, layout, plugin, views, sync, metadata, visualization, general]: (general) ', 'general').trim();
+			version = await questionWithDefault('version: (1.0.0) ', '1.0.0').trim();
+			author = await questionWithDefault('author: ', '').trim();
+			minAppVersion = await questionWithDefault('minimum compatible MediaMonkey version: (5.0.0) ', '5.0.0').trim();
+			iconFile = await questionWithDefault('icon file: ', '').trim();
 			
 			let newInfoJson = {
 				title,
@@ -707,6 +695,14 @@ module.exports = {
 						}
 						catch (err) {
 							console.log(err.toString());
+							
+							//Show folder of the target after the error so they can fix it
+							let p1 = spawn('explorer', [`${symlinkPath},`, '/select'], { windowsVerbatimArguments: true });
+							
+							p1.on('error', (err) => {
+								p1.kill();
+								console.error(err);
+							});
 						}
 					}
 					else {
