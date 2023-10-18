@@ -4,7 +4,7 @@ const readline = require('readline');
 const { spawn } = require('child_process');
 const archiver = require('archiver');
 const glob = require('glob');
-const minimatch = require('minimatch');
+const { minimatch } = require('minimatch');
 require('colors');
 
 const rl = readline.createInterface({
@@ -23,6 +23,7 @@ module.exports = {
 			showAfterComplete = false,
 			appendVersion = false,
 			preambleFilePath,
+			licenseFilePath,
 			preambleFileContents,
 			preambleCommentPatterns = {};
 		
@@ -124,6 +125,11 @@ module.exports = {
 					case '--preamblefile':
 						preambleFilePath = path.resolve(args[i + 1]);
 						args.splice(i, 2); i--; // TODO might need to be -= 2?
+						break;
+					case '-l':
+					case '--licensefile':
+						licenseFilePath = path.resolve(args[i + 1]);
+						args.splice(i, 2); i--;
 						break;
 					case '-a':
 					case '--appendversion':
@@ -323,7 +329,7 @@ module.exports = {
 		}
 		
 		function getFileListWithIgnore(pathToArchive, resultFilePath) {
-			return new Promise((resolve, reject) => {
+			return new Promise(async (resolve, reject) => {
 				
 				let ignoreString;
 				let ignoreGlobs = ['*.zip', '*.mmip']; // Default ignoreGlobs
@@ -348,11 +354,9 @@ module.exports = {
 				
 				var filteredMatches = [];
 				
-				var mg = new glob.Glob(path.join(pathToArchive, '**'), 
-					{}, 
-					(err, matches) => {
-						if (err) return reject(err); 
-						
+				// for some reason, glob doesn't like it when using Windows separator
+				glob.glob(path.join(pathToArchive, '**').split(path.sep).join(path.posix.sep))
+					.then(matches => {
 						var minimatchOpts = {
 							matchBase: true,
 						}
@@ -374,8 +378,8 @@ module.exports = {
 						console.log(`${String(matches.length - filteredMatches.length - 1).brightYellow} files skipped.\n`);
 						
 						resolve(filteredMatches);
-					}
-				);
+					})
+					.catch(reject);
 			})
 		}
 		
@@ -450,6 +454,12 @@ module.exports = {
 					else {
 						archive.file(file, {name: path.relative(pathToArchive, file)});
 					}
+				}
+				
+				// Add license file to root of archive
+				if (licenseFilePath) {
+					debugLog(`Adding license file: ${licenseFilePath}`);
+					archive.file(licenseFilePath, {name: path.basename(licenseFilePath)});
 				}
 				
 				// finalize the archive (ie we are done appending files but streams have to finish yet)
@@ -695,6 +705,8 @@ module.exports = {
 						}
 						catch (err) {
 							console.log(err.toString());
+							
+							console.log('Could not create junction due to the preceding error. '.brightRed + 'Please delete the target folder/symlink manually and try again.');
 							
 							//Show folder of the target after the error so they can fix it
 							let p1 = spawn('explorer', [`${symlinkPath},`, '/select'], { windowsVerbatimArguments: true });
