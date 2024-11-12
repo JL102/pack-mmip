@@ -556,15 +556,15 @@ module.exports = {
 			let autoName = path.basename(process.cwd());
 			let title, id, description, type, version, author, minAppVersion, iconFile;
 			
-			title = await questionWithDefault(`title: (${autoName}) `, autoName);
+			title = (await questionWithDefault(`title: (${autoName}) `, autoName));
 			let autoId = title.replace(/ /g, '-').replace(/['"()\[\]]/g, '').toLowerCase();
-			id = await questionWithDefault(`id: (${autoId}) `, autoId).trim();
-			description = await questionWithDefault('description: ', '').trim();
-			type = await questionWithDefault('type [skin, layout, plugin, views, sync, metadata, visualization, general]: (general) ', 'general').trim();
-			version = await questionWithDefault('version: (1.0.0) ', '1.0.0').trim();
-			author = await questionWithDefault('author: ', '').trim();
-			minAppVersion = await questionWithDefault('minimum compatible MediaMonkey version: (5.0.0) ', '5.0.0').trim();
-			iconFile = await questionWithDefault('icon file: ', '').trim();
+			id = (await questionWithDefault(`id: (${autoId}) `, autoId)).trim();
+			description = (await questionWithDefault('description: ', '')).trim();
+			type = (await questionWithDefault('type [skin, layout, plugin, views, sync, metadata, visualization, general]: (general) ', 'general')).trim();
+			version = (await questionWithDefault('version: (1.0.0) ', '1.0.0')).trim();
+			author = (await questionWithDefault('author: ', '')).trim();
+			minAppVersion = (await questionWithDefault('minimum compatible MediaMonkey version: (5.0.0) ', '5.0.0')).trim();
+			iconFile = (await questionWithDefault('icon file: ', '')).trim();
 			
 			let newInfoJson = {
 				title,
