@@ -618,15 +618,7 @@ module.exports = {
 		}
 		
 		function runCreateSymlink() {			
-			let defaultDestPath;
-			// default to appdata folder
-			if (process.env.APPDATA && fs.existsSync(path.join(process.env.APPDATA, 'MediaMonkey5', 'Scripts'))) {
-				defaultDestPath = path.join(process.env.APPDATA, 'MediaMonkey5', 'Scripts');
-			}
-			else {
-				defaultDestPath = 'C:\\Program Files (x86)\\MediaMonkey 5\\Scripts';
-			}
-			
+			// === BEGIN TARGET ===
 			let target = args[0];
 			
 			if (!target) {
@@ -642,16 +634,33 @@ module.exports = {
 			// Attempt to read addon ID
 			let infoJsonPath = path.join(pathToTarget, 'info.json');
 			let infoJson;
+			let isSkin = false;
 			try {
 				infoJson = require(infoJsonPath);
 				if (!infoJson.id) {
 					console.log(`Invalid info.json! Could not find addon ID.`);
 					return rl.close();
 				}
+				if (infoJson.type === 'skin') {
+					debugLog('Detected that this addon is a skin! Will attempt to put in Skins folder instead of Scripts.');
+					isSkin = true;
+				}
 			}
 			catch (err) {
 				console.log(`Could not read ${infoJsonPath.brightYellow}!`);
 				return rl.close();
+			}
+			let subFolder = isSkin ? 'Skins' : 'Scripts'; // change which folder to put in, depending on whether it's a skin or script
+
+			// === END TARGET ===
+			
+			let defaultDestPath;
+			// default to appdata folder
+			if (process.env.APPDATA && fs.existsSync(path.join(process.env.APPDATA, 'MediaMonkey5', subFolder))) {
+				defaultDestPath = path.join(process.env.APPDATA, 'MediaMonkey5', subFolder);
+			}
+			else {
+				defaultDestPath = `C:\\Program Files (x86)\\MediaMonkey 5\\${subFolder}`;
 			}
 			
 			let question;
@@ -664,19 +673,19 @@ module.exports = {
 				
 				let symlinkBase = path.resolve(answer);
 				
-				debugLog(path.join(symlinkBase, 'Portable', 'Scripts'));
+				debugLog(path.join(symlinkBase, 'Portable', subFolder));
 				
 				// Check for 'Portable' subfolder
-				if (fs.existsSync(path.join(symlinkBase, 'Portable', 'Scripts'))) {
-					debugLog('Switching to Portable/Scripts folder');
-					symlinkBase = path.join(symlinkBase, 'Portable', 'Scripts')
+				if (fs.existsSync(path.join(symlinkBase, 'Portable', subFolder))) {
+					debugLog(`Switching to Portable/${subFolder} folder`);
+					symlinkBase = path.join(symlinkBase, 'Portable', subFolder)
 				}
 				
-				if (path.basename(symlinkBase).toLowerCase() != 'scripts') {
-					symlinkBase = path.join(symlinkBase, 'Scripts');
+				if (path.basename(symlinkBase).toLowerCase() != subFolder.toLowerCase()) {
+					symlinkBase = path.join(symlinkBase, subFolder);
 					// Special-case 'sorry' message
 					if (!fs.existsSync(symlinkBase)) {
-						console.log(`Could not find a Scripts folder (${symlinkBase.brightYellow}). Did you enter the right path?`);
+						console.log(`Could not find a ${subFolder} folder (${symlinkBase.brightYellow}). Did you enter the right path?`);
 						return rl.close();
 					}
 				}
