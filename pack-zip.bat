@@ -1,2 +1,2 @@
 @echo off
-node "%~dp0/bin/pack-zip.js" %*
+node "%~dp0/zip.js" -z %*

@@ -1,3 +1,4 @@
 *.mmip
 *.zip
 *.lockb
+**/node_modules/**

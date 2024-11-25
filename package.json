@@ -1,6 +1,6 @@
 {
   "name": "pack-mmip",
-  "version": "1.4.0",
+  "version": "2.0.0-beta1",
   "description": "Automatic packer for MediaMonkey Extension (MMIP) files. Run npm install, and Add this folder to your system PATH, then you can run pack-mmip and pack-zip.",
   "main": "pack-mmip.bat",
   "author": {
@@ -16,13 +16,20 @@
   },
   "license": "ISC",
   "dependencies": {
-    "archiver": "~6.0.1",
+    "archiver": "~7.0.1",
+    "chalk": "^5.3.0",
     "colors": "~1.4.0",
-    "glob": "~10.3.10",
-    "minimatch": "~9.0.3"
+    "glob": "~11.0.0",
+    "minimatch": "~10.0.1",
+    "typescript": "^5.6.3"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/JL102/pack-mmip"
-  }
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.3",
+    "@types/node": "^22.9.0"
+  },
+  "type": "module"
 }
