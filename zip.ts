@@ -9,6 +9,8 @@ import { createInterface } from 'readline/promises';
 import { minimatch } from 'minimatch';
 import archiver from 'archiver';
 import { spawn } from 'child_process';
+import chokidar from 'chokidar';
+import ts from 'typescript';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +39,10 @@ const { values: opts, positionals } = parseArgs({
 			short: 'm',
 			default: false,
 		},
+		'data-folder': {
+			type: 'string',
+			default: '',
+		},
 		debug: {
 			type: 'boolean',
 			short: 'd',
@@ -48,6 +54,10 @@ const { values: opts, positionals } = parseArgs({
 			default: false,
 		},
 		help: {
+			type: 'boolean',
+			default: false,
+		},
+		dev: {
 			type: 'boolean',
 			default: false,
 		},
@@ -105,7 +115,6 @@ const { values: opts, positionals } = parseArgs({
 let doZipInstead = opts['extension-zip']; // shorthand
 
 positionals.splice(0, 2);
-console.log(positionals);
 
 if (opts.version) {
 	printVersion();
@@ -149,6 +158,16 @@ if (opts.config) {
 
 if (opts['create-symlink']) {
 	await runCreateSymlink();
+	process.exit();
+}
+
+if (opts.dev) {
+	await RunHostTask();
+	process.exit();
+}
+
+if (opts.init) {
+	await runInitProjectTask();
 	process.exit();
 }
 
@@ -310,20 +329,26 @@ export async function runArchiveTask(type: 'zip' | 'mmip') {
 		for (let file of paths) {
 			debugLog(file);
 
+			if (fs.lstatSync(file).isDirectory()) {
+				console.log('Skipping directory');
+				continue;
+			}
+
 			let ext = path.extname(file).substring(1); // File extension without the dot
 			let fileContents = fs.readFileSync(file, { encoding: 'utf-8' });
+			let relativePath = path.relative(pathToArchive, file);
 			if (preambleFileContents && ext in preambleCommentPatterns) {
 				debugLog('Adding preamble');
 				// @ts-ignore
 				let pattern = preambleCommentPatterns[ext];
 				let preamble = pattern.replace('%s', preambleFileContents);
 				let contents = preamble + '\n\n' + fileContents;
-				if (ext === 'js') contents = processJSFile(contents);
+				if (ext === 'js') contents = processJSFile(contents, relativePath);
 				archive.append(contents, { name: path.relative(pathToArchive, file) });
 			}
 			// case for a JS file without preamble
 			else if (ext === 'js') {
-				let contents = processJSFile(fileContents);
+				let contents = processJSFile(fileContents, relativePath);
 				archive.append(contents, { name: path.relative(pathToArchive, file) });
 			}
 			else {
@@ -423,6 +448,17 @@ function debugError(...args: unknown[]) {
 	if (opts.debug) console.error(...args);
 }
 
+async function questionWithDefault(question: string, defaultAns: string) {
+	if (opts.yes) return defaultAns;
+	let answer = await rl.question(question);
+	if (answer.trim() === '') {
+		return defaultAns;
+	}
+	else {
+		return answer;
+	}
+}
+
 async function questionAllowingAutoYes(question: string) {
 	if (opts.yes) {
 		return true;
@@ -467,12 +503,19 @@ function printHelp() {
 		+ '\t' + command + chalk.yellow(' config') + '\t\tDifferent configuration files are saved for pack-mmip and pack-zip.\n'
 		+ '\nIf path to packed extension is not specified, it will default to the name of the folder.\n'
 		+ ((doZipInstead) ?
-			'The main purpose of this package is the command ' + chalk.yellow('pack-mmip') + ', for packing MMIP extensions for MediaMonkey.\n' :
+			'The main purpose of this package is the command ' + chalk.yellow('pack-mmip') + ', for packing MMIP extensions for MediaMonkey.' :
 			'Additionally comes with a command ' + chalk.yellow('pack-zip') + ' if you wish to use it to output a ZIP file instead of MMIP.\n'
 		)
-		+ '\nADDITIONAL UTILITIES:\n'
-		+ chalk.cyan('\t--create-symlink <path>') + '\t\tTool that creates a symbolic link from your install\'s scripts folder to \n\t\t\t\t\tyour project folder, making it easier for development. Just restart\n\t\t\t\t\tMediaMonkey for your changes to take effect, instead of having to\n\t\t\t\t\tre-pack and re-install the addon.\n'
-		+ chalk.cyan('\t--init') + '\t\t\t\tTool that automatically creates a new info.json file in the current\n\t\t\t\t\tfolder, after prompting for title, ID, version, etc. Similar to `npm init`.'
+		+ (doZipInstead ? '' :
+			'\nADDITIONAL UTILITIES:\n'
+			// + chalk.cyan('\t--create-symlink <path>') + '\t\tTool that creates a symbolic link from your install\'s scripts folder to \n\t\t\t\t\tyour project folder, making it easier for development. Just restart\n\t\t\t\t\tMediaMonkey for your changes to take effect, instead of having to\n\t\t\t\t\tre-pack and re-install the addon.\n'
+			+ chalk.cyan('\t--dev <path>') + '\t\t\tTool that temporarily "mounts" your addon to MediaMonkey\'s scripts/\n'
+			+ chalk.cyan('\t [--data-folder <path>]') + '\t\tskins folder, making development easier. Just restart MediaMonkey\n\t\t\t\t\tfor your changes to take effect, instead of having to re-pack and\n\t\t\t\t\tre-install your addon. Watches & compiles any TS files as they change.\n'
+			+ '\n'
+			+ chalk.cyan('\t--init') + '\t\t\t\tTool that automatically creates a new info.json file in the current\n\t\t\t\t\tfolder, after prompting for title, ID, version, etc. Similar to `npm init`.\n\t\t\t\t\tAlso, optionally initializes TypeScript support for code hints.'
+			+ '\nTYPESCRIPT INFORMATION:\n'
+			+ '\tpack-mmip enables you to write addons in TypeScript by integrating with the ' + chalk.blue('mediamonkey') + ' NPM package,\n\twhich contains type declarations for MediaMonkey\'s source code. During the build step, pack-mmip\n\ttransforms imports into the format that MediaMonkey expects, with correct relative paths, e.g. \n\t' + chalk.blue('import Multiview from "mediamonkey/controls/multiview"') + ' -> ' + chalk.blue('import Multiview from "./controls/multiview"')
+		)
 	// + '\t--init \t--init-project'.brightCyan+'\t\tSimilar to '+'npm init'.brightYellow+', this tool helps initialize an addon project\n\t\t\t\t\tby creating info.json and prompting for each item.'
 	//+ '\nNOTE: The packed extension will be placed in the directory that this script was called from.';
 	console.log(helpStr);
@@ -528,24 +571,60 @@ async function getFileListWithIgnore(pathToArchive: string, resultFilePath: stri
 	return filteredMatches;
 }
 
-// Process compiled TS files
-function processJSFile(contents: string) {
+// Adjust imports/exports 
+function processJSFile(contents: string, relativePath: string) {
+
+	let numDirectoriesDeep = getDepth(relativePath) - 1; // since relativePath includes filename, subtract one
+	let relative = getUpperRelativePath(numDirectoriesDeep);
+
+	contents = contents
+		// Replace imports from the type declarations package with the correct relative path, according to the file's relative position from the project root
+		.replace(/(from|import) (["'])mediamonkey-types\//gm, (text) => {
+			return text.replace('mediamonkey-types/', relative);
+		})
+		.replace(/^export \{\};?$/gm, '');
+
+	// If this is an _add script, remove imports to itself (e.g. import PlaylistHeader, inside playlistHeader_add.ts)
+	let filename = path.parse(relativePath).name;
+	if (filename.endsWith('_add')) {
+		let sourceCodeFilename = filename.split('_add')[0];
+		let regex = new RegExp(`^import .*${sourceCodeFilename}["'];?$`, 'gm');
+		debugLog(`Detected _add script: ${chalk.yellow(sourceCodeFilename)}. Regex to remove = ${chalk.blue(regex)}`);
+		contents = contents.replace(regex, '');
+	}
+
 	// Remove empty export
-	return contents.replace(/^export \{\};?$/gm, '');
+	return contents;
 }
 
-async function runCreateSymlink() {
-	let target = positionals[0];
+// To convert 'declarations/etc' into the correct relative path from the addon's root
+function getUpperRelativePath(depth: number) {
+	if (depth == 0) return './';
+	let ret = '';
+	for (let i = 0; i < depth; i++) {
+		ret += '../'
+	};
+	return ret;
+}
 
-	if (!target) {
-		console.log(`Please provide the relative path to your project which you want to link to. For example: ${chalk.cyan('pack-mmip --create-symlink ./myExtension')}`);
-		return rl.close();
-	}
+function getDepth(relativePath: string) {
+	// If the path is empty, depth is 0
+	if (!relativePath) return 0;
+
+	// Normalize the path and split by the platform-specific separator
+	const parts = relativePath.split(path.sep);
+
+	// Filter out empty parts (to handle edge cases) and return the count
+	return parts.filter(part => part.length > 0).length;
+}
+
+async function getTargetAndSymlinkFromUser() {
+	let target = positionals[0] || process.cwd();
 
 	let pathToTarget = path.resolve(target);
 	if (!fs.existsSync(pathToTarget)) {
 		console.log(`Sorry, the provided path (${chalk.yellow(pathToTarget)}) does not exist.`);
-		return rl.close();
+		process.exit(1);
 	}
 	// Attempt to read addon ID
 	let infoJsonPath = path.join(pathToTarget, 'info.json');
@@ -555,7 +634,7 @@ async function runCreateSymlink() {
 		infoJson = requireJSON(infoJsonPath)
 		if (!infoJson.id) {
 			console.log(`Invalid info.json! Could not find addon ID.`);
-			return rl.close();
+			process.exit(1);
 		}
 		if (infoJson.type === 'skin') {
 			debugLog('Detected that this addon is a skin! Will attempt to put in Skins folder instead of Scripts.');
@@ -564,28 +643,51 @@ async function runCreateSymlink() {
 	}
 	catch (err) {
 		console.log(`Could not read ${chalk.yellow(infoJsonPath)}!`);
-		return rl.close();
+		process.exit(1);
 	}
 	let subFolder = isSkin ? 'Skins' : 'Scripts'; // change which folder to put in, depending on whether it's a skin or script
 
 	// === END TARGET ===
 
+	let appdataPath = process.env.APPDATA ? path.join(process.env.APPDATA, 'MediaMonkey5', subFolder) : undefined;
+	let programFilesPath1 = `C:\\Program Files (x86)\\MediaMonkey 5\\${subFolder}`;
+	let programFilesPath2 = `C:\\Program Files (x86)\\Ventis\\MediaMonkey\\${subFolder}`;
+
 	let defaultDestPath;
 	// default to appdata folder
-	if (process.env.APPDATA && fs.existsSync(path.join(process.env.APPDATA, 'MediaMonkey5', subFolder))) {
-		defaultDestPath = path.join(process.env.APPDATA, 'MediaMonkey5', subFolder);
+	if (appdataPath && fs.existsSync(appdataPath)) {
+		defaultDestPath = appdataPath;
+	}
+	else if (fs.existsSync(programFilesPath1)) {
+		defaultDestPath = programFilesPath1;
+	}
+	else if (fs.existsSync(programFilesPath2)) {
+		defaultDestPath = programFilesPath2;
 	}
 	else {
-		defaultDestPath = `C:\\Program Files (x86)\\MediaMonkey 5\\${subFolder}`;
+		console.error(`Could not find MediaMonkey data folder or install location! Tried ${appdataPath}, ${programFilesPath1}, and ${programFilesPath2}`);
+		process.exit(1);
 	}
 
-	let answer = await rl.question(`Please enter the path to your MediaMonkey data folder (leave blank to default to ${defaultDestPath}): `);
 	// Default path: appdata/MM5 or MM5 install folder
-	if (!answer || answer.trim() == '') {
-		answer = defaultDestPath;
+	let destPath: string;
+	if (opts['data-folder']) {
+		destPath = opts['data-folder'];
+	}
+	else if (opts.yes) {
+		destPath = defaultDestPath;
+	}
+	else {
+		let answer = await rl.question(`Please enter the path to your MediaMonkey data folder (leave blank to default to ${defaultDestPath}): `);
+		if (!answer || answer.trim() == '') {
+			destPath = defaultDestPath;
+		}
+		else {
+			destPath = answer;
+		}
 	}
 
-	let symlinkBase = path.resolve(answer);
+	let symlinkBase = path.resolve(destPath);
 
 	debugLog(path.join(symlinkBase, 'Portable', subFolder));
 
@@ -600,13 +702,13 @@ async function runCreateSymlink() {
 		// Special-case 'sorry' message
 		if (!fs.existsSync(symlinkBase)) {
 			console.log(`Could not find a ${subFolder} folder (${chalk.yellow(symlinkBase)}). Did you enter the right path?`);
-			return rl.close();
+			process.exit(1);
 		}
 	}
 
 	if (!fs.existsSync(symlinkBase)) {
 		console.log(`Sorry, the provided path (${chalk.yellow(symlinkBase)}) does not exist.`);
-		return rl.close();
+		process.exit();
 	}
 
 	// Process the destination
@@ -614,6 +716,180 @@ async function runCreateSymlink() {
 	// let basename = path.basename(pathToTarget);
 	let basename = infoJson.id; // addon ID
 	let symlinkPath = path.join(symlinkBase, basename);
+
+	return { symlinkPath, symlinkBase, infoJson, pathToTarget };
+}
+
+export function RunHostTask() {
+	return new Promise(async (resolve, reject) => {
+		const tempDir = process.env.TEMP;
+		assert(tempDir, 'Could not find temp folder! Make sure TEMP environment variable is set.')
+
+		const packMMIPHostFolder = path.join(tempDir, 'pack-mmip');
+
+		const { symlinkBase, infoJson, pathToTarget: projectFolder } = await getTargetAndSymlinkFromUser();
+
+		// Check if the requested addon is already installed
+		debugLog('Checking if the requested addon is already installed separately...');
+		const items = fs.readdirSync(symlinkBase);
+		for (let item of items) {
+			if (item === 'pack-mmip-hosted') continue; // skip the pack-mmip symlink
+			let folderpath = path.join(symlinkBase, item);
+			try {
+				let stat = fs.statSync(folderpath);
+				if (stat.isDirectory()) {
+					let infoJSONPath = path.join(folderpath, 'info.json');
+					let thisInfoJson = requireJSON(infoJSONPath);
+					assert(thisInfoJson.id !== infoJson.id, `Addon ${infoJson.id} is already installed normally! Please uninstall it first to avoid conflicts.`);
+				}
+			}
+			catch (err) {
+				console.error(err);
+			}
+		}
+
+		const basename: string = infoJson.id;
+		assert(basename, 'basename not defined');
+
+		const destHostFolder = path.join(packMMIPHostFolder, basename); // folder containing compiled code
+		const symlinkPath = path.join(symlinkBase, 'pack-mmip-hosted'); // only one pack-mmip-hosted addon at a time
+
+		if (fs.existsSync(symlinkPath)) {
+			assert(fs.lstatSync(symlinkPath).isSymbolicLink(),
+				`Symlink destination path ${symlinkPath} exists, but is not a symlink. Abandoning to avoid accidental deletion of data.`
+			)
+			debugLog(`Unlinking ${symlinkPath}`)
+			fs.unlinkSync(symlinkPath);
+		}
+
+		fs.rmSync(destHostFolder, { recursive: true, force: true });
+		fs.mkdirSync(destHostFolder, { recursive: true });
+
+		debugLog(`Linking ${symlinkPath} to ${destHostFolder}`)
+		fs.symlinkSync(destHostFolder, symlinkPath, 'junction');
+
+		// todo check for tsconfig.json
+
+		const tsConfigPath = path.join(projectFolder, 'tsconfig.json')
+		const isTSProject = fs.existsSync(tsConfigPath);
+
+		const doCopyFile = (file: string) =>
+			!file.includes('node_modules') &&
+			!(file.endsWith('.ts') && isTSProject)
+
+		function copyFolder(from: string, to: string) {
+			fs.mkdirSync(to, { recursive: true });
+			fs.readdirSync(from).forEach(file => {
+				if (!doCopyFile(file)) return;
+				const fromPath = path.join(from, file);
+				const toPath = path.join(to, file);
+				if (fs.lstatSync(fromPath).isDirectory()) {
+					copyFolder(fromPath, toPath);
+				}
+				else {
+					fs.copyFileSync(fromPath, toPath);
+				}
+			});
+		}
+
+		copyFolder(projectFolder, destHostFolder);
+
+		const fileWatcher = chokidar.watch(projectFolder, { depth: 10 });
+
+		fileWatcher.on('change', (fileChanged: string) => {
+			const relativePath = path.relative(projectFolder, fileChanged);
+			if (!doCopyFile(relativePath)) {
+				return debugLog(`fileWatcher detected ${relativePath} changed but it's a TS/do-not-copy file, so skipping and letting tsc-watch handle it`);
+			}
+			// Copy this path to the correct location in destHostFolder
+			const destPath = path.join(destHostFolder, relativePath);
+			debugLog(`Copying ${relativePath}`)
+			fs.copyFileSync(fileChanged, destPath);
+		});
+
+		if (isTSProject) {
+			debugLog('Creating TS watch program');
+
+			const formatHost = {
+				getCanonicalFileName: (path: string) => path,
+				getCurrentDirectory: ts.sys.getCurrentDirectory,
+				getNewLine: () => ts.sys.newLine
+			};
+
+			const createProgram = ts.createEmitAndSemanticDiagnosticsBuilderProgram;
+			const host = ts.createWatchCompilerHost(
+				tsConfigPath,
+				{
+					outDir: destHostFolder
+				},
+				ts.sys,
+				createProgram,
+				reportDiagnostic,
+				reportWatchStatusChanged,
+			);
+
+			// You can technically override any given hook on the host, though you probably
+			// don't need to.
+			// Note that we're assuming `origCreateProgram` and `origPostProgramCreate`
+			// doesn't use `this` at all.
+			const origCreateProgram = host.createProgram;
+			host.createProgram = (rootNames, options, host, oldProgram) => {
+				const program = origCreateProgram(rootNames, options, host, oldProgram);
+				const origEmit = program.emit;
+				program.emit = (targetSourceFile, writeFile, cancellationToken, emitOnlyDtsFiles, customTransformers) => {
+					const customWriteFile = (fileName: string, data: string, writeByteOrderMark: boolean, onError?: (message: string) => void, sourceFiles?: readonly ts.SourceFile[]) => {
+						if (fileName.endsWith('.js')) {
+							debugLog('Post-processing JS file');
+							const relativePath = path.relative(destHostFolder, fileName);
+							data = processJSFile(data, relativePath);
+						}
+						ts.sys.writeFile(fileName, data, writeByteOrderMark);
+					};
+
+					return origEmit(targetSourceFile, customWriteFile, cancellationToken, emitOnlyDtsFiles, customTransformers);
+				};
+
+				return program;
+			};
+
+			let watchProgram = ts.createWatchProgram(host);
+
+			function reportDiagnostic(diagnostic: ts.Diagnostic) {
+				// console.log(diagnostic);
+				// console.error(`${name}: ${errorName}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, formatHost.getNewLine())}`);
+				let formattedDiag = ts.formatDiagnosticsWithColorAndContext([diagnostic], {
+					getCurrentDirectory: () => projectFolder,
+					getCanonicalFileName: fileName => fileName,
+					getNewLine: () => formatHost.getNewLine()
+				})
+				console.error(`${formattedDiag}`);
+			}
+
+		}
+		
+		process.on('SIGINT', function () {
+			console.log('Unmounting addon from MediaMonkey data folder...');
+			fs.unlinkSync(symlinkPath);
+			console.log('Done');
+			rl.close();
+			resolve(undefined);
+		});
+
+		/**
+		 * Prints a diagnostic every time the watch status changes.
+		 * This is mainly for messages like "Starting compilation" or "Compilation completed".
+		 */
+		function reportWatchStatusChanged(diagnostic: ts.Diagnostic) {
+			console.log(`${diagnostic.messageText}`);
+		}
+	})
+}
+
+async function runCreateSymlink() {
+	
+	console.log(`${chalk.red('Deprecation notice:')} ${chalk.yellow('--create-symlink')} is being deprecated in favor of ${chalk.yellow('--dev')}.`);
+
+	const { symlinkPath, pathToTarget } = await getTargetAndSymlinkFromUser();
 
 	if (await questionAllowingAutoYes(`Create junction at ${chalk.yellow(symlinkPath)} -> ${chalk.yellow(pathToTarget)}? (yes): `)) {
 		try {
@@ -641,4 +917,73 @@ async function runCreateSymlink() {
 		console.log('Cancelled.');
 	}
 	rl.close();
+}
+
+async function runInitProjectTask() {
+	console.log('This utility will walk you through initializing your project.');
+	console.log('\nSee `pack-mmip --help` for info on how to use the rest of the tool\'s utilities.');
+	console.log('\nPress ^C at any time to quit.\n');
+	let autoName = path.basename(process.cwd());
+	let title, id, description, type, version, author, minAppVersion, iconFile;
+
+	let doTypeScript = await questionAllowingAutoYes('Include TypeScript support for type hinting in your IDE? (yes): ');
+
+	title = (await questionWithDefault(`title: (${autoName}) `, autoName));
+	let autoId = title.replace(/ /g, '-').replace(/['"()\[\]]/g, '').toLowerCase();
+	id = (await questionWithDefault(`id: (${autoId}) `, autoId)).trim();
+	description = (await questionWithDefault('description: ', '')).trim();
+	type = (await questionWithDefault('type [skin, layout, plugin, views, sync, metadata, visualization, general]: (general) ', 'general')).trim();
+	version = (await questionWithDefault('version: (1.0.0) ', '1.0.0')).trim();
+	author = (await questionWithDefault('author: ', '')).trim();
+	minAppVersion = (await questionWithDefault('minimum compatible MediaMonkey version: (5.0.0) ', '5.0.0')).trim();
+	iconFile = (await questionWithDefault('icon file: ', '')).trim();
+
+	let newInfoJson: any = {
+		title,
+		id,
+		description,
+		type,
+		version,
+		author,
+		minAppVersion
+	};
+
+	if (iconFile) newInfoJson.icon = iconFile;
+
+	let destination = path.join(process.cwd(), 'info.json');
+	let output = JSON.stringify(newInfoJson, null, 4);
+
+	let ok = await questionAllowingAutoYes(chalk.yellow(output) + '\n\nIs this OK? (yes): ');
+	if (ok) {
+		// write file
+		try {
+			fs.writeFileSync(destination, output, 'utf-8');
+
+			if (opts.yes) {
+				console.log(`Wrote to ${destination}:\n\n${output}`);
+			}
+			else {
+				console.log(`Wrote to ${destination}.`);
+			}
+		}
+		catch (err) {
+			console.error(err);
+			return rl.close();
+		}
+	}
+
+	if (doTypeScript) {
+		const tsconfigTemplate = fs.readFileSync(path.join(__dirname, 'tsconfig-template.jsonc'));
+		
+		let tsconfigPath = path.join(process.cwd(), 'tsconfig.json');
+		debugLog(`Outputting tsconfigTemplate to ${tsconfigPath}`);
+		fs.writeFileSync(tsconfigPath, tsconfigTemplate, 'utf-8');
+	}
+}
+
+function assert(condition: unknown, message: string): asserts condition {
+	if (!condition) {
+		console.error(message);
+		process.exit(1);
+	}
 }
