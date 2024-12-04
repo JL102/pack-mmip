@@ -191,6 +191,37 @@ if (opts.preamblefile) {
 	}
 }
 
+async function compileFile(program: ts.Program, filePath: string) {
+    const sourceFile = program.getSourceFile(filePath);
+	assert(sourceFile, `Source file ${filePath} not in program.`);
+
+    let compiledCode = '';
+
+    const customWriteFile = (fileName: string, data: string, writeByteOrderMark: boolean, onError?: (message: string) => void, sourceFiles?: readonly ts.SourceFile[]) => {
+        if (fileName.endsWith('.js')) {
+            compiledCode = data;
+        }
+    };
+
+    const emitResult = program.emit(sourceFile, customWriteFile);
+
+    // Report diagnostics if any
+    emitResult.diagnostics.forEach(diagnostic => {
+        if (diagnostic.file) {
+            const { line, character } = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start!);
+            const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+            console.error(`${diagnostic.file.fileName} (${line + 1},${character + 1}): ${message}`);
+        } else {
+            console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+        }
+    });
+
+	assert(!emitResult.emitSkipped, `Emitting ${filePath} failed`);
+
+    return compiledCode;
+};
+ 
+
 export async function runArchiveTask(type: 'zip' | 'mmip') {
 	if (type === 'zip') doZipInstead = true;
 	// return;
@@ -323,6 +354,14 @@ export async function runArchiveTask(type: 'zip' | 'mmip') {
 
 	// pipe archive data to the file
 	archive.pipe(output);
+	
+	let program: ts.Program|undefined;
+	const tsConfigPath = path.join(pathToArchive, 'tsconfig.json');
+	if (type === 'mmip' && fs.existsSync(tsConfigPath)) {
+		const configFile = ts.readConfigFile(tsConfigPath, ts.sys.readFile);
+		let parsedCommandLine = ts.parseJsonConfigFileContent(configFile.config, ts.sys, pathToArchive);
+		program = ts.createProgram(parsedCommandLine.fileNames, parsedCommandLine.options);
+	}
 
 	try {
 		const paths = await getFileListWithIgnore(pathToArchive, resultFilePath);
@@ -333,24 +372,40 @@ export async function runArchiveTask(type: 'zip' | 'mmip') {
 				console.log('Skipping directory');
 				continue;
 			}
-
+			
 			let ext = path.extname(file).substring(1); // File extension without the dot
-			let fileContents = fs.readFileSync(file, { encoding: 'utf-8' });
 			let relativePath = path.relative(pathToArchive, file);
-			if (preambleFileContents && ext in preambleCommentPatterns) {
-				debugLog('Adding preamble');
-				// @ts-ignore
-				let pattern = preambleCommentPatterns[ext];
-				let preamble = pattern.replace('%s', preambleFileContents);
-				let contents = preamble + '\n\n' + fileContents;
-				if (ext === 'js') contents = processJSFile(contents, relativePath);
-				archive.append(contents, { name: path.relative(pathToArchive, file) });
+			
+			// Add the file contents directly instead of archive.file()
+			function addContents(contents: string, name: string) {
+				// add preamble if it's provided
+				if (preambleFileContents) {
+					debugLog('Adding preamble');
+					// @ts-ignore
+					let pattern = preambleCommentPatterns[ext];
+					let preamble = pattern.replace('%s', preambleFileContents);
+					contents = preamble + '\n\n' + contents;
+				}
+				archive.append(contents, { name });
 			}
-			// case for a JS file without preamble
+
+			if (ext === 'ts' && program) {
+				debugLog(`Compiling ${file}`);
+				let compiledCode = await compileFile(program, file);
+				const jsFile = file.replace(/\.ts$/, '.js');
+				let contents = processJSFile(compiledCode, relativePath);
+				addContents(contents, path.relative(pathToArchive, jsFile));
+			}
 			else if (ext === 'js') {
+				let fileContents = fs.readFileSync(file, { encoding: 'utf-8' });
 				let contents = processJSFile(fileContents, relativePath);
-				archive.append(contents, { name: path.relative(pathToArchive, file) });
+				addContents(contents, path.relative(pathToArchive, file));
 			}
+			else if (ext in preambleCommentPatterns) {
+				let fileContents = fs.readFileSync(file, { encoding: 'utf-8' });
+				addContents(fileContents, path.relative(pathToArchive, file));
+			}
+			// if it's not a ts/js file or another text file supporting preamble, just add it as a file
 			else {
 				archive.file(file, { name: path.relative(pathToArchive, file) });
 			}
