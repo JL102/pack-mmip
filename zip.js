@@ -261,7 +261,7 @@ export async function runArchiveTask(type) {
         let overwrite = await questionAllowingAutoYes(chalk.red('\nWarning: ') +
             resultFilePath + ' already exists.\nOverwrite? (Y/n): ');
         if (!overwrite) {
-            rl.close(); // exit
+            process.exit(0);
         }
         ;
     }
@@ -309,13 +309,34 @@ export async function runArchiveTask(type) {
         const configFile = ts.readConfigFile(tsConfigPath, ts.sys.readFile);
         let parsedCommandLine = ts.parseJsonConfigFileContent(configFile.config, ts.sys, pathToArchive);
         program = ts.createProgram(parsedCommandLine.fileNames, parsedCommandLine.options);
+        // Retrieve and log diagnostics before emitting
+        const diagnostics = ts.getPreEmitDiagnostics(program);
+        let anyErrorsFound = false;
+        if (diagnostics.length > 0) {
+            diagnostics.forEach(diagnostic => {
+                if (diagnostic.file) {
+                    const { line, character } = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+                    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+                    let relativePath = path.relative(pathToArchive, diagnostic.file.fileName);
+                    console.error(`${relativePath} (${line + 1},${character + 1}): ${message}`);
+                    anyErrorsFound = true;
+                }
+                else {
+                    console.error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+                }
+            });
+        }
+        if (anyErrorsFound) {
+            // todo: add option to ignore TS errors or turn them into warnings?
+            console.error('Some TypeScript errors were found during compilation.');
+            process.exit(1);
+        }
     }
     try {
         const paths = await getFileListWithIgnore(pathToArchive, resultFilePath);
         for (let file of paths) {
             debugLog(file);
             if (fs.lstatSync(file).isDirectory()) {
-                console.log('Skipping directory');
                 continue;
             }
             let ext = path.extname(file).substring(1); // File extension without the dot
@@ -418,7 +439,7 @@ async function runConfiguration() {
 }
 function printVersion() {
     // Simply read the version from package.json
-    let thisPackageJson = requireJSON('./package.json');
+    let thisPackageJson = requireJSON(path.join(__dirname, 'package.json'));
     console.log(thisPackageJson.version);
 }
 function debugLog(...args) {
@@ -543,8 +564,8 @@ function processJSFile(contents, relativePath) {
     let relative = getUpperRelativePath(numDirectoriesDeep);
     contents = contents
         // Replace imports from the type declarations package with the correct relative path, according to the file's relative position from the project root
-        .replace(/(from|import) (["'])mediamonkey-types\//gm, (text) => {
-        return text.replace('mediamonkey-types/', relative);
+        .replace(/(from|import) (["'])mediamonkey\//gm, (text) => {
+        return text.replace('mediamonkey/', relative);
     })
         .replace(/^export \{\};?$/gm, '');
     // If this is an _add script, remove imports to itself (e.g. import PlaylistHeader, inside playlistHeader_add.ts)
@@ -684,7 +705,21 @@ export function RunHostTask() {
                 if (stat.isDirectory()) {
                     let infoJSONPath = path.join(folderpath, 'info.json');
                     let thisInfoJson = requireJSON(infoJSONPath);
-                    assert(thisInfoJson.id !== infoJson.id, `Addon ${infoJson.id} is already installed normally! Please uninstall it first to avoid conflicts.`);
+                    if (thisInfoJson.id === infoJson.id) {
+                        // Attempt to open folder in file explorer before throwing error
+                        let p2 = spawn('explorer', [symlinkBase]);
+                        await new Promise((resolve, reject) => {
+                            p2.on('spawn', () => {
+                                console.log("is spawned!");
+                                setTimeout(resolve, 500); // doesn't seem to spawn if i don't set a timeout
+                            });
+                            p2.on('error', (error) => {
+                                p2.kill();
+                                reject(error);
+                            });
+                        });
+                        assert(false, `Addon ${infoJson.id} is already installed normally! Please uninstall it first to avoid conflicts.`);
+                    }
                 }
             }
             catch (err) {
@@ -704,14 +739,65 @@ export function RunHostTask() {
         fs.mkdirSync(destHostFolder, { recursive: true });
         debugLog(`Linking ${symlinkPath} to ${destHostFolder}`);
         fs.symlinkSync(destHostFolder, symlinkPath, 'junction');
-        // todo check for tsconfig.json
         const tsConfigPath = path.join(projectFolder, 'tsconfig.json');
         const isTSProject = fs.existsSync(tsConfigPath);
+        let watchProgram;
+        let program;
+        // let program: ts.Program | undefined;
+        // let parsedCommandLine: ts.ParsedCommandLine | undefined;
+        // let incrementalProgram: ts.BuilderProgram | undefined;
+        // if (isTSProject) {
+        // 	const configFile = ts.readConfigFile(tsConfigPath, ts.sys.readFile);
+        // 	parsedCommandLine = ts.parseJsonConfigFileContent(configFile.config, ts.sys, projectFolder);
+        // 	const host = ts.createIncrementalCompilerHost({
+        // 		incremental: true,
+        // 		...parsedCommandLine.options,
+        // 	}, ts.sys);
+        // 	const rootNames = parsedCommandLine.fileNames;
+        // 	// program = ts.createProgram(parsedCommandLine.fileNames, parsedCommandLine.options);
+        // 	incrementalProgram = ts.createIncrementalProgram({
+        // 		rootNames: parsedCommandLine.fileNames,
+        // 		options: {
+        // 			...parsedCommandLine.options,
+        // 			incremental: true,
+        // 		},
+        // 		host
+        // 	});
+        // }
         const doCopyFile = (file) => !file.includes('node_modules') &&
-            !(file.endsWith('.ts') && isTSProject);
-        function copyFolder(from, to) {
+            !(program && program.getSourceFile(file));
+        async function processFile(fromPath, toPath) {
+            if (!doCopyFile(fromPath))
+                return;
+            fs.mkdirSync(path.dirname(toPath), { recursive: true }); // for new folders
+            fs.copyFileSync(fromPath, toPath);
+            // let fileName = path.basename(fromPath); // for logging
+            // if (incrementalProgram && incrementalProgram.getSourceFile(fromPath)) {
+            // 	debugLog(`File ${fileName} is part of the TS project`);
+            // 	const jsFilePath = toPath.replace(/\.ts$/, '.js');
+            // 	const relativePath = path.relative(projectFolder, fromPath);
+            // 	let jsCode: string;
+            // 	// JS files: skip compilation and just read code
+            // 	if (fileName.toLowerCase().endsWith('.js')) {
+            // 		jsCode = fs.readFileSync(fromPath, 'utf8');
+            // 	}
+            // 	// TS files: actually compile
+            // 	else {
+            // 		jsCode = await compileFile(incrementalProgram, fromPath);
+            // 	}
+            // 	let processedJSCode = processJSFile(jsCode, relativePath);
+            // 	debugLog(`Writing file directly after processing: ${jsFilePath}`)
+            // 	fs.writeFileSync(jsFilePath, processedJSCode, 'utf8');
+            // }
+            // else {
+            // 	debugLog(`Copying file ${fileName} normally`);
+            // 	fs.copyFileSync(fromPath, toPath);
+            // }
+        }
+        async function copyFolder(from, to) {
             fs.mkdirSync(to, { recursive: true });
-            fs.readdirSync(from).forEach(file => {
+            const files = fs.readdirSync(from);
+            for (let file of files) {
                 if (!doCopyFile(file))
                     return;
                 const fromPath = path.join(from, file);
@@ -720,21 +806,35 @@ export function RunHostTask() {
                     copyFolder(fromPath, toPath);
                 }
                 else {
-                    fs.copyFileSync(fromPath, toPath);
+                    processFile(fromPath, toPath);
                 }
-            });
+            }
         }
         copyFolder(projectFolder, destHostFolder);
         const fileWatcher = chokidar.watch(projectFolder, { depth: 10 });
         fileWatcher.on('change', (fileChanged) => {
             const relativePath = path.relative(projectFolder, fileChanged);
+            // console.log(program?.getSourceFile(fileChanged));
             if (!doCopyFile(relativePath)) {
                 return debugLog(`fileWatcher detected ${relativePath} changed but it's a TS/do-not-copy file, so skipping and letting tsc-watch handle it`);
             }
-            // Copy this path to the correct location in destHostFolder
             const destPath = path.join(destHostFolder, relativePath);
-            debugLog(`Copying ${relativePath}`);
-            fs.copyFileSync(fileChanged, destPath);
+            // if (program) {
+            // 	let st = performance.now();
+            // 	const configFile = ts.readConfigFile(tsConfigPath, ts.sys.readFile);
+            // 	parsedCommandLine = ts.parseJsonConfigFileContent(configFile.config, ts.sys, projectFolder);
+            // 	console.log(performance.now() - st);
+            // 	let dt = performance.now();
+            // 	program = ts.createProgram(parsedCommandLine.fileNames, parsedCommandLine.options, undefined, program);
+            // 	console.log(performance.now() - dt);
+            // }
+            processFile(fileChanged, destPath);
+            // if (parsedCommandLine?.fileNames.includes(fileChanged)) {
+            // 	console.log('file is in the ts program!');
+            // }
+            // // Copy this path to the correct location in destHostFolder
+            // debugLog(`Copying ${relativePath}`)
+            // fs.copyFileSync(fileChanged, destPath);
         });
         if (isTSProject) {
             debugLog('Creating TS watch program');
@@ -753,12 +853,12 @@ export function RunHostTask() {
             // doesn't use `this` at all.
             const origCreateProgram = host.createProgram;
             host.createProgram = (rootNames, options, host, oldProgram) => {
-                const program = origCreateProgram(rootNames, options, host, oldProgram);
-                const origEmit = program.emit;
-                program.emit = (targetSourceFile, writeFile, cancellationToken, emitOnlyDtsFiles, customTransformers) => {
+                const newProgram = origCreateProgram(rootNames, options, host, oldProgram);
+                const origEmit = newProgram.emit;
+                newProgram.emit = (targetSourceFile, writeFile, cancellationToken, emitOnlyDtsFiles, customTransformers) => {
                     const customWriteFile = (fileName, data, writeByteOrderMark, onError, sourceFiles) => {
                         if (fileName.endsWith('.js')) {
-                            debugLog('Post-processing JS file');
+                            debugLog(`Post-processing ${fileName}`);
                             const relativePath = path.relative(destHostFolder, fileName);
                             data = processJSFile(data, relativePath);
                         }
@@ -766,12 +866,12 @@ export function RunHostTask() {
                     };
                     return origEmit(targetSourceFile, customWriteFile, cancellationToken, emitOnlyDtsFiles, customTransformers);
                 };
-                return program;
+                program = newProgram; // for quick getSourceFile()
+                return newProgram;
             };
-            let watchProgram = ts.createWatchProgram(host);
+            watchProgram = ts.createWatchProgram(host);
+            program = watchProgram.getProgram();
             function reportDiagnostic(diagnostic) {
-                // console.log(diagnostic);
-                // console.error(`${name}: ${errorName}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, formatHost.getNewLine())}`);
                 let formattedDiag = ts.formatDiagnosticsWithColorAndContext([diagnostic], {
                     getCurrentDirectory: () => projectFolder,
                     getCanonicalFileName: fileName => fileName,
@@ -780,13 +880,24 @@ export function RunHostTask() {
                 console.error(`${formattedDiag}`);
             }
         }
-        process.on('SIGINT', function () {
+        // Listen for if the user types 'q' into the console (without pressing enter)
+        process.stdin.setRawMode(true);
+        process.stdin.resume();
+        process.stdin.setEncoding('utf8');
+        process.stdin.on('data', function (key) {
+            if (String(key) === 'q') {
+                stop();
+            }
+        });
+        console.log('Press ' + chalk.yellow('"q"') + ' to exit');
+        process.on('SIGINT', stop);
+        function stop() {
             console.log('Unmounting addon from MediaMonkey data folder...');
             fs.unlinkSync(symlinkPath);
-            console.log('Done');
+            console.log('Done. Exiting');
             rl.close();
             resolve(undefined);
-        });
+        }
         /**
          * Prints a diagnostic every time the watch status changes.
          * This is mainly for messages like "Starting compilation" or "Compilation completed".
