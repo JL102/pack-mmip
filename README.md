@@ -25,10 +25,7 @@ OPTIONS:
         -y      --Yes                   Automatically answer "yes" to prompts
 
         -p      --PreambleFile <name>   File containing a preamble to be added to the top of text files.
-        --preamble-<filetype> <pattern> Pattern for the preamble to be inserted into files of the specified
-                                        extension, most notably because different types of code have different
-                                        patterns for comments. Use %s for where the preamble text should go.
-                                        For example: --preamble-js "/* %s */" --preamble-html "<!-- %s -->"
+
 TO IGNORE CERTAIN FILES:
                                         Add a file named .mmipignore or .archiveignore in your project root.
                                         It uses glob syntax similar to .gitignore
@@ -40,23 +37,32 @@ If path to packed extension is not specified, it will default to the name of the
 Additionally comes with a command pack-zip if you wish to use it to output a ZIP file instead of MMIP.
 
 ADDITIONAL UTILITIES:
-        --create-symlink <path>         Tool that creates a symbolic link from your install's scripts folder to
-                                        your project folder, making it easier for development. Just restart
-                                        MediaMonkey for your changes to take effect, instead of having to
-                                        re-pack and re-install the addon.
+        --dev <path>                    Tool that temporarily "mounts" your addon to MediaMonkey's scripts/
+         [--data-folder <path>]         skins folder, making development easier. Just restart MediaMonkey
+                                        for your changes to take effect, instead of having to re-pack and
+                                        re-install your addon. Watches & compiles any TS files as they change.
+
         --init                          Tool that automatically creates a new info.json file in the current
                                         folder, after prompting for title, ID, version, etc. Similar to `npm init`.
+                                        Also, optionally initializes TypeScript support for code hints.
+TYPESCRIPT INFORMATION:
+        pack-mmip enables you to write addons in TypeScript by integrating with the mediamonkey NPM package,
+        which contains type declarations for MediaMonkey's source code. During the build step, pack-mmip
+        transforms imports into the format that MediaMonkey expects, with correct relative paths, e.g.
+        import Multiview from "mediamonkey/controls/multiview" -> import Multiview from "./controls/multiview"
 ```
 
 Examples:
 ```sh
 # Packs C:/projects/MyPackage into C:/projects/MyPackage.mmip
-pack-mmip C:/projects/MyPackage C:/projects/MyPackage.mmip
+pack-mmip C:/projects/MyPackage
 
 # Does the same as above, but with relative paths instead of absolute paths
-# If you do not add a .mmip file extension, it will do it for you.
 cd C:/projects/MyPackage
-pack-mmip ./ ../MyPackage
+pack-mmip .
+# If you do not provide a file name, the output file name will be based on the folder name. You can provide the output file name as a second argument.
+pack-mmip . MyPackageName
+pack-mmip . MyPackageName.mmip
 
 # The -s argument will open a file explorer window containing the newly packed file.
 pack-mmip ./ ../MyPackage -s
@@ -65,8 +71,15 @@ pack-mmip ./ ../MyPackage -s
 pack-mmip ./ ../MyPackage -o
 ```
 
-### Installation from source
+### TypeScript information
+pack-mmip enables you to write addons in TypeScript by integrating with the `mediamonkey` NPM package, which contains type declarations for MediaMonkey's source code. During the build step, pack-mmip transforms imports into the format that MediaMonkey expects, with correct relative paths, e.g. 
+`import Multiview from "mediamonkey/controls/multiview"` -> `import Multiview from "./controls/multiview"`
+
+Running `pack-mmip --init` will prompt you to set up TypeScript support. Doing so is highly recommended. You do **not** need to write your addon's code in TypeScript. The default `tsconfig.json` that is created will enable type hinting for JS files as well.
+
+If type hinting does not show up, or you see an error saying that the package "mediamonkey" could not be found, you may have to run `npm install --save-dev mediamonkey` in your project.
+<!-- ### Installation from source
 1. Download as a zip, and extract it to the folder of your choice
 1. Run `npm install`
 1. Add the folder to your system PATH
-1. Then, you can run `pack-mmip`.
+1. Then, you can run `pack-mmip`. -->
